@@ -448,3 +448,64 @@ Goal: per category, which ESCO skills the real postings demand, with weights. Op
 - **Weight:** posting frequency (% of postings) vs summed similarity.
 Keep both layers in ESCO-skill space so core + overlay are comparable. Emerging/non-ESCO
 skills → future enrichment agent, not here.
+
+**Tested (2026-06-03) — embedding overlay does NOT work well; built `overlay_demand.py` but
+results are noisy:**
+- Doc-level (whole posting → nearest ESCO skills): captures the posting's *theme*, not its
+  requirements. Cuoco's top "demand" skills were tourism/hotel (area/offerta turistica,
+  valutare destinazioni turistiche, gestire gruppi di turisti), not cooking.
+- Sentence-level (split posting → nearest skill per sentence, thresh 0.55): worse — job-ad
+  boilerplate (benefits, company blurb, contract) matches spurious abstract ESCO skills
+  (rivedere bozze ×40, considerare i fusi orari, fare viaggi internazionali, processo
+  creativo come artista).
+- Root cause: ESCO skill labels are abstract verb-phrases; nearest-neighbour of noisy ad
+  text is plausible-but-wrong. Real skill extraction from postings needs the **LLM**.
+- **Decision/recommendation:** ship ESCO-core only; do the overlay with the LLM later (read
+  postings, extract→map to ESCO). `overlay_demand.py` kept but parked; test data cleared
+  (job_benchmark = core only, demand_skills=[]). Skill embeddings cached in data/cache/.
+
+## 17. CP2021 track — BUILT (2026-06-03)
+
+Data in `data/cp2021/`: CP2021.xlsx, cp2021_classificazione.xlsx, cp2011_cp2021_raccordo.xlsx.
+New schema: `cp2021_profession`, `cp2021_label`, `cp2021_profession_skill`, `job_cp2021_map`;
+`job_benchmark` gained `cp2021_cod_5, cp2021_label, cp2021_skills, n_cp2021`.
+
+- **`load_cp2021.py`** — 813 professions (quinto_digit) + **7,626 match labels** (nome_5 +
+  6,813 voci professionali from the 6th-digit sheet, used like ESCO altLabels).
+- **`classify_cp2021.py`** — hybrid match job_category→cod_5 over all labels (best per
+  profession). With voci: **59 flagged** (vs 157 with nome_5 only). Quality comparable to
+  ESCO: Contabile→Contabili (0.92), Sistemista→Amministratori di sistemi (0.94),
+  Cuoco→Cuochi in alberghi e ristoranti, Promoter→Tecnici della pubblicità. Some still off
+  (Magazziniere→wholesale, Operaio→manager) → human review.
+- **`fetch_cp2021_skills.py`** — pulls per mapped cod_5 from INAPP API survey.php (datasets
+  1=compiti,2=conoscenze,4/5=skill,6=attività). Rich weighted data: ~33 conoscenze, ~93
+  skill, 57 attività per profession, importanza 0–100. Handles both JSON shapes; ON CONFLICT
+  dedup; skips empty codes. Tested 5 codes = 971 rows, all populated.
+- **`materialize_benchmark.py`** — now fills BOTH sections: ESCO essential/optional +
+  CP2021 top-30 (skill+conoscenze) by importanza (`CP2021_TOPN` env).
+
+Two benchmarks per job_category now flow into one `job_benchmark` row → the report's two
+sections. Review tooling (export/import_review) currently targets ESCO's job_occupation_map;
+extend to job_cp2021_map when reviewing CP2021 mappings.
+
+**DONE:** full INAPP fetch = 202/202 mapped codes had data, **39,274 competence rows**.
+Materialize → **306 rows with BOTH sections**: ESCO (avg 24 essential / 33 optional) +
+CP2021 (avg 30 competences, 306/306 filled). Observation: ESCO gives task-specific skills,
+CP2021/INAPP gives transversal O*NET-style competences (comm/listening rate high) +
+conoscenze — genuinely complementary, which is the point of showing both.
+
+## 18. STATUS SUMMARY (end of 2026-06-03 session)
+
+**Working end to end (local):** ESCO + CP2021 dual benchmark in `job_benchmark`, 306
+categories. Pipelines: mirror_categories → classify (esco+cp2021) → load (esco+cp2021) →
+fetch_cp2021_skills → materialize. Review tooling for ESCO mappings (export/import_review).
+
+**Known TODO / next:**
+- Human review of mappings (ESCO: 41 flagged; CP2021: 59 flagged). import_review currently
+  ESCO-only → extend to job_cp2021_map.
+- LLM phase (deferred): (a) demand overlay extraction from postings, (b) classification
+  tiebreak precision for both taxonomies.
+- CP2021 benchmark currently uses skill+conoscenze top-30; consider adding compiti/attività.
+- Wire into Workint (FastAPI router, Milvus, Angular) — see §10. CV-side gap analysis +
+  report generation still to come (this session built the benchmark side).
+- Lots of uncommitted work as of this point — COMMIT recommended.

@@ -85,3 +85,56 @@ CREATE TABLE IF NOT EXISTS job_benchmark (
     esco_version        TEXT NOT NULL,
     generated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- ============================================================
+-- CP2021 (ISTAT) track — second benchmark. Professions from the
+-- CP2021 classification; skills from the INAPP API (survey.php).
+-- ============================================================
+
+-- The 813 unità professionali (quinto_digit). cod_5 == INAPP API `codice`.
+CREATE TABLE IF NOT EXISTS cp2021_profession (
+    cod_5       TEXT PRIMARY KEY,         -- dotted 5-level code, e.g. 2.1.1.1.1
+    nome_5      TEXT NOT NULL,
+    descr_5     TEXT
+);
+
+-- All match labels for a profession: its nome_5 + the 6th-digit "voci professionali"
+-- (specific job titles). Used like ESCO altLabels to boost classification recall.
+CREATE TABLE IF NOT EXISTS cp2021_label (
+    cod_5   TEXT NOT NULL REFERENCES cp2021_profession(cod_5),
+    label   TEXT NOT NULL,
+    source  TEXT NOT NULL          -- 'nome_5' | 'voce'
+);
+CREATE INDEX IF NOT EXISTS idx_cp_label_cod ON cp2021_label(cod_5);
+
+-- INAPP survey dimensions per profession (knowledge/skill/activity/task/style + scores).
+CREATE TABLE IF NOT EXISTS cp2021_profession_skill (
+    cod_5         TEXT NOT NULL REFERENCES cp2021_profession(cod_5),
+    dataset_id    INTEGER NOT NULL,       -- INAPP idDataset (1 compiti,2 conoscenze,4/5 skill,6 attività,8 stili)
+    section       TEXT NOT NULL,          -- our label for the dataset
+    dim_code      TEXT NOT NULL,          -- JSON key within the dataset (e.g. B15, or task number)
+    label         TEXT NOT NULL,
+    importanza    REAL,
+    complessita   REAL,
+    PRIMARY KEY (cod_5, dataset_id, dim_code)
+);
+CREATE INDEX IF NOT EXISTS idx_cp_skill_cod ON cp2021_profession_skill(cod_5);
+
+-- Mapping job_category -> CP2021 profession (parallel to job_occupation_map).
+CREATE TABLE IF NOT EXISTS job_cp2021_map (
+    category_id            INTEGER PRIMARY KEY REFERENCES job_category(category_id),
+    job_category           TEXT,
+    cod_5                  TEXT REFERENCES cp2021_profession(cod_5),
+    classification_method  TEXT,
+    confidence             REAL,
+    candidates_considered  JSONB,
+    needs_review           BOOLEAN NOT NULL DEFAULT false,
+    reviewed               BOOLEAN NOT NULL DEFAULT false,
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- CP2021 columns on the materialized benchmark (the second report section).
+ALTER TABLE job_benchmark ADD COLUMN IF NOT EXISTS cp2021_cod_5  TEXT;
+ALTER TABLE job_benchmark ADD COLUMN IF NOT EXISTS cp2021_label  TEXT;
+ALTER TABLE job_benchmark ADD COLUMN IF NOT EXISTS cp2021_skills JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE job_benchmark ADD COLUMN IF NOT EXISTS n_cp2021      INTEGER NOT NULL DEFAULT 0;

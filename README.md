@@ -57,11 +57,21 @@ python scripts/export_review.py
 python scripts/import_review.py
 ```
 
+## CP2021 (ISTAT) track — the second benchmark
+
+```bash
+# Download the CP2021 files first (see data/cp2021/README.md), then:
+python scripts/load_cp2021.py        # 813 professions + voci professionali (match labels)
+python scripts/classify_cp2021.py    # hybrid match job_category -> CP2021 code (job_cp2021_map)
+python scripts/fetch_cp2021_skills.py # INAPP API -> cp2021_profession_skill (competences + scores)
+```
+
 ## Materialize the benchmark (Stage C)
 
 ```bash
-# Stage C1: ESCO-core benchmark — one row per category with essential/optional ESCO skills.
-# Re-run after each review pass. (Postings demand overlay = Stage C2, not yet built.)
+# One row per category with BOTH sections: ESCO essential/optional skills + CP2021 top
+# competences (skill+conoscenze by importance). Re-run after reviews/refetch.
+# (Postings demand overlay = Stage C2, needs the LLM, not yet built.)
 python scripts/materialize_benchmark.py
 ```
 
