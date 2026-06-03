@@ -1,0 +1,14 @@
+# Secrets / config
+.env
+
+# ESCO data bundle (large + subject to ESCO terms — download locally, do not commit)
+data/esco/*.csv
+data/esco/*.zip
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Docker volume (if ever bind-mounted locally)
+pgdata/

@@ -1,0 +1,17 @@
+# Local Postgres for testing the skills-benchmark pipeline.
+# Disposable: `docker compose down -v` wipes it.
+services:
+  postgres:
+    image: postgres:16
+    container_name: workint_skills_pg
+    environment:
+      POSTGRES_USER: workint
+      POSTGRES_PASSWORD: workint
+      POSTGRES_DB: skills_benchmark
+    ports:
+      - "5433:5432"   # host 5433 -> container 5432 (avoids clashing with a local 5432)
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:

@@ -1,0 +1,5 @@
+# Stage A: DB foundation + ESCO loader. No ML deps yet (those arrive in Stage B).
+SQLAlchemy>=2.0
+psycopg2-binary>=2.9
+pandas>=2.0
+python-dotenv>=1.0
