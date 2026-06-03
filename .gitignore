@@ -5,10 +5,21 @@
 data/esco/*.csv
 data/esco/*.zip
 
+# CP2021 / INAPP data (download locally; keep the README only)
+data/cp2021/*.xlsx
+data/cp2021/*.xls
+data/cp2021/*.csv
+data/cp2021/*.rdf
+data/cp2021/*.json
+data/cp2021/*.zip
+
 # Python
 .venv/
 __pycache__/
 *.pyc
+
+# Cached embeddings
+data/cache/
 
 # Docker volume (if ever bind-mounted locally)
 pgdata/

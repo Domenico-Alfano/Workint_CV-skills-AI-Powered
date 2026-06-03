@@ -1,5 +1,9 @@
-# Stage A: DB foundation + ESCO loader. No ML deps yet (those arrive in Stage B).
+# Stage A: DB foundation + ESCO loader.
 SQLAlchemy>=2.0
 psycopg2-binary>=2.9
 pandas>=2.0
 python-dotenv>=1.0
+
+# Stage B: category -> ESCO classification (embeddings + lexical hybrid).
+sentence-transformers>=3.0
+rapidfuzz>=3.0

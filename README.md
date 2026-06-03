@@ -42,6 +42,29 @@ python scripts/load_esco.py
 python scripts/mirror_categories.py
 ```
 
+## Classify categories -> ESCO, then review (Stage B)
+
+```bash
+# Hybrid match (mpnet embeddings + rapidfuzz lexical) each in_benchmark category to an
+# ESCO occupation; stores top-5 candidates + a needs_review flag in job_occupation_map:
+python scripts/classify_categories.py
+
+# Export the mappings to data/review/job_occupation_review.csv (flagged rows first):
+python scripts/export_review.py
+#   -> open the CSV, set `pick` (1-5) or `correct_uri` per row to correct mappings
+
+# Persist your review decisions back into job_occupation_map:
+python scripts/import_review.py
+```
+
+## Materialize the benchmark (Stage C)
+
+```bash
+# Stage C1: ESCO-core benchmark — one row per category with essential/optional ESCO skills.
+# Re-run after each review pass. (Postings demand overlay = Stage C2, not yet built.)
+python scripts/materialize_benchmark.py
+```
+
 ## Verify
 
 ```bash

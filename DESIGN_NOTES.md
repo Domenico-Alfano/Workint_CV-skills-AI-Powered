@@ -333,9 +333,118 @@ the category set + counts).
 - New script `scripts/mirror_categories.py` (replaces `mirror_jobs.py`); config vars added
   to `db.py`/`.env.example`: POSTINGS_TABLE, DATE_COLUMN, DATE_FROM, DATE_TO, MIN_POSTINGS.
 
-**Next — Stage B: classify the 306 in_benchmark categories → ESCO occupation.** Approach:
-embeddings (sentence-transformers, IT model; reuse Workint's) over the category name vs
-ESCO occupation labels → top-K → LLM tiebreak → human review of low-confidence. Then ESCO
-core skill lookup, then the postings overlay, then materialize `job_benchmark`.
-Decision pending for Stage B: which embedding model + whether to bring in Milvus now or do
-a local cosine pass first (306 categories × 3,039 occupations is tiny — local is fine).
+## 13. Stage B — classification (category → ESCO): DONE (retrieval), review pending
+
+**Built `scripts/classify_categories.py`** — hybrid match of each in_benchmark category to
+an ESCO occupation:
+- Index EVERY ESCO label (preferred + altLabels) → occupation; 16,546 labels. Essential:
+  ESCO leaves are hyper-specific, the generic terms categories use live in altLabels.
+- **Hybrid score** = ALPHA·semantic + (1-ALPHA)·lexical (ALPHA=0.5):
+  - semantic = `paraphrase-multilingual-mpnet-base-v2` cosine.
+  - lexical = `rapidfuzz` WRatio (catches stems like Magazziniere↔magazzino).
+- Best label per occupation → top-5 candidates stored in
+  `job_occupation_map.candidates_considered`; `needs_review = top1 < 0.70`.
+
+**Why hybrid + mpnet (evidence):** the light MiniLM model was erratic on short Italian
+occupational terms (rated "Magazziniere"↔"smaltatore" 0.88 vs correct 0.52; "Contabile"→
+park keeper) and the correct occupation was often absent from top-5 → no LLM could fix it.
+mpnet + lexical fixed the common cases (Magazziniere, Contabile, Cameriere, Cuoco, Logistica
+all correct). User decisions: stronger model + lexical hybrid; **LLM tiebreak deferred** —
+review by hand first.
+
+**Result:** 306 categories classified, **41 flagged needs_review**. A tail of errors remains
+(e.g. Impiegato Commerciale→modello, Store Manager→responsabile acquisti, Cameriera ai
+Piani→stage machinery) — handled by human review.
+
+**Human-review loop (built):**
+- `scripts/export_review.py` → `data/review/job_occupation_review.csv` (flagged + high-volume
+  first; columns c1..c5 + `pick`/`correct_uri`/`notes`).
+- `scripts/import_review.py` → applies decisions (pick 2-5 or correct_uri → override
+  method='manual'; pick=1 → accept; blank → untouched). Sets reviewed/needs_review.
+
+**Observations / open for later:**
+- Some `job_category` values are broad sector buckets (Alberghi/Ristoranti/Bar,
+  Pubblicità/Marketing/PR), not single occupations → hard to map to one ESCO leaf; consider
+  special handling or excluding.
+- Granularity: generic title → ESCO leaf is lossy (a title maps to a family / ISCO group).
+  Possible refinement: benchmark at ISCO-group level for generic titles.
+- LLM tiebreak still available as a future precision step over top-K once retrieval is trusted.
+
+**Next — Stage C:** after review, ESCO-core skill lookup (occupation→essential/optional) +
+postings demand overlay (ESCO-skill frequency across the category's postings) → materialize
+`job_benchmark` (one row per category). Tooling: deps now include sentence-transformers +
+rapidfuzz; model `mpnet` cached locally.
+
+## 14. DUAL BENCHMARK decision (2026-06): ESCO + CP2021 side by side
+
+User decision: the report shows **two benchmarks per job title** — one **CP2021 (Italian)**
+section and one **ESCO** section. Not either/or.
+
+**Critical data fact:** CP2021 (ISTAT) is a *classification only — no skills*. The Italian
+skills come from **INAPP** (Indagine Campionaria sulle Professioni / Sistema Informativo
+sulle Professioni), keyed to CP2021 (sections: conoscenze, competenze/skill, attività, …,
+O*NET-style with importance/level scores). So **CP2021 benchmark = ISTAT CP2021 codes/labels
++ INAPP competences**.
+
+**Caveats (see `data/cp2021/README.md`):**
+- INAPP CP2021 survey released in waves — 1st wave (2023) ~250/813 UP → native CP2021
+  competence data may be **partial**. Complete legacy data is CP2011 → bridge via
+  CP2011→CP2021 raccordo.
+- The CP benchmark is only *distinct* from ESCO if we use INAPP **native** competences; just
+  crosswalking CP→ESCO for skills would collapse the two into one.
+- CP2021 units are coarser (~813) and Italian-native → likely **better matching** for the
+  generic `job_category` strings than ESCO's 3,000 hyper-specific leaves.
+
+**Sources (researched):** ISTAT CP2021 classification (direct xlsx via INAIL mirror) +
+navigator at professioni.istat.it; INAPP Sistema Informativo (LOD/RDF/CSV) at
+inapp.gov.it/professioni; CP2011↔CP2021 raccordo (ISTAT xlsx); CP↔ESCO via INAPP LMI or
+ISCO-08 bridge. Full guide + URLs + needed columns in `data/cp2021/README.md`.
+
+**Planned build (mirrors ESCO side):** tables `cp2021_profession`, `cp2021_skill`,
+`cp2021_profession_skill`; `scripts/load_cp2021.py`; a second mapping `job_category →
+CP2021 profession` (reuse the hybrid matcher); `job_benchmark` carries BOTH skill sets
+(esco_* + cp2021_*).
+
+**DATA IN HAND + API DISCOVERY (2026-06-03):**
+- Downloaded to `data/cp2021/`: `CP2021.xlsx` (sheets primo..quinto_digit; **quinto_digit =
+  813 unità professionali** with `cod_5` dotted `1.1.1.1.1`, `nome_5`, `descr_5`),
+  `cp2021_classificazione.xlsx` (richer: +6th digit voci, affini), `cp2011_cp2021_raccordo.xlsx`
+  (sheet 'raccordo III-V', real header on row 1: cod_3/nome_3 → cod_5/nome_5).
+- **INAPP API solves the competence sourcing** — `https://api.inapp.org/professioni/survey.php
+  ?codice=<cod_5>&idDataset=<N>`, public JSON, no auth. `codice` format == CP2021.xlsx
+  `cod_5`. Datasets: 1=Compiti, 2=Conoscenze(+complessità), 4&5=Skill, 6=Attività,
+  8=Stili, 22=RIASEC, 15–21 aggregated. Payload per dimension: importanza, complessita,
+  label[{descDimensione,longDescDimensione}]. Also `search.php` (by name/task/skill/code).
+  → No bulk competence file needed; fetch per mapped code (≤ few hundred calls).
+
+**Concrete CP2021 build plan (ready to start):**
+1. `load_cp2021.py` — load quinto_digit (813) → `cp2021_profession(cod_5, nome_5, descr_5)`;
+   optionally load raccordo + 6th-digit voci/affini as extra match labels.
+2. Extend the hybrid matcher to also map `job_category → cod_5` (against nome_5 + affini/voci)
+   → `job_cp2021_map` (parallel to `job_occupation_map`); same review CSV approach.
+3. `fetch_cp2021_skills.py` — for each mapped cod_5, call survey.php (datasets 1,2,4,5,6),
+   keep top dimensions by `importanza` → `cp2021_profession_skill(cod_5, dim_code, type,
+   label, importanza, complessita)`.
+4. Stage C: `job_benchmark` carries both ESCO and CP2021 skill sets per category.
+
+## 15. Stage C1 — ESCO-core benchmark: DONE (2026-06-03)
+
+`scripts/materialize_benchmark.py` — single SQL INSERT...SELECT from `job_occupation_map` +
+`esco_occupation_skill` → `job_benchmark`. Truncate+rebuild; re-run after each review pass.
+Result: **306 rows, avg 24 essential + 33 optional ESCO skills, 0 empty.** Spot-checked
+Magazziniere / Cuoco — sensible. `demand_skills` left empty (Stage C2).
+NOTE: reflects current (mostly un-reviewed) mappings — re-run after import_review.py.
+
+## 16. Stage C2 — postings demand overlay: DESIGN PENDING (user to choose method)
+
+Goal: per category, which ESCO skills the real postings demand, with weights. Open forks:
+- **Posting text source:** mirror job_description/job_highlights locally vs query external
+  on demand vs sample N postings/category (~97k postings in window).
+- **Skill-detection method:** (a) lexical/FTS match of ESCO skill labels+altLabels in text —
+  deterministic, explainable ("in X% of postings"), but LOW recall (ESCO skills are long verb
+  phrases rarely appearing verbatim); (b) embedding match (mpnet, posting/sentence → ESCO
+  skills) — better recall, fuzzy, more compute, threshold-sensitive; (c) LLM extraction —
+  best, but user deferred LLM.
+- **Weight:** posting frequency (% of postings) vs summed similarity.
+Keep both layers in ESCO-skill space so core + overlay are comparable. Emerging/non-ESCO
+skills → future enrichment agent, not here.
