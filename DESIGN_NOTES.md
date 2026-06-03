@@ -509,3 +509,29 @@ fetch_cp2021_skills → materialize. Review tooling for ESCO mappings (export/im
 - Wire into Workint (FastAPI router, Milvus, Angular) — see §10. CV-side gap analysis +
   report generation still to come (this session built the benchmark side).
 - Lots of uncommitted work as of this point — COMMIT recommended.
+
+## 19. CV-side scope (confirmed 2026-06-03) — NOT yet built
+
+Two frontend-facing flows, converging on a common worker profile → gap vs target job:
+- **Flow 1 (ad-hoc CV):** frontend → **existing external CV extractor** (endpoint TBD, built
+  by someone else) → structured profile (professional experience, education, skills,
+  languages, …).
+- **Flow 2 (stored CV):** frontend passes a worker id → read pre-extracted rich info from
+  the **`workers` table in `workint-clone`** (same external DB as offerte_lavoro). No
+  extraction step.
+- **Common path:** compare profile to the **target job = worker's preferred or current
+  role** → return structured gap (present vs missing) against **BOTH ESCO and CP2021**.
+- **Stretch (later):** gap-closing suggestions (courses, books, …) — likely needs external
+  data + LLM.
+
+Deliverable = backend **FastAPI** endpoints for the frontend (both flows). Gap analysis is
+**deterministic** (embedding match of worker skills vs benchmark skills); narrative report +
+suggestions are the LLM phase.
+
+**To resolve when schemas arrive:**
+- How `workers`' "preferred/current job" links to a `job_benchmark` row (matchable code/
+  category → direct join; else run through the hybrid matcher).
+- `workers` skill format (rich, exact shape TBD) — drives the matching.
+- **Scoping caveat:** benchmark is skill-centric (ESCO/CP2021 skills). Skills gap is solid;
+  education/experience/languages have no benchmark field yet → lighter/heuristic unless we
+  add reference data.
