@@ -67,9 +67,8 @@ CREATE TABLE IF NOT EXISTS job_occupation_map (
 );
 
 -- ---------- Materialized benchmark: ONE ROW PER job_category ----------
--- The table the rest of the product reads from. Two layers of requirements:
---   essential_skills / optional_skills  -> ESCO core (deterministic)
---   demand_skills                       -> postings overlay [{uri,label,freq}]
+-- The table the API reads from. ESCO essential/optional skills + (later, via §10) the
+-- CP2021 columns added below.
 CREATE TABLE IF NOT EXISTS job_benchmark (
     category_id         INTEGER PRIMARY KEY REFERENCES job_category(category_id),
     job_category        TEXT NOT NULL,
@@ -78,10 +77,8 @@ CREATE TABLE IF NOT EXISTS job_benchmark (
     isco_code           TEXT,
     essential_skills    JSONB NOT NULL DEFAULT '[]'::jsonb,  -- ESCO core [{uri,label,type}]
     optional_skills     JSONB NOT NULL DEFAULT '[]'::jsonb,  -- ESCO core
-    demand_skills       JSONB NOT NULL DEFAULT '[]'::jsonb,  -- postings overlay [{uri,label,freq}]
     n_essential         INTEGER NOT NULL DEFAULT 0,
     n_optional          INTEGER NOT NULL DEFAULT 0,
-    n_demand            INTEGER NOT NULL DEFAULT 0,
     esco_version        TEXT NOT NULL,
     generated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );

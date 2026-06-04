@@ -1,6 +1,6 @@
 """Load a pinned ESCO CSV bundle (Italian) into the esco_* tables.
 
-Expects these files in ESCO_DATA_DIR (see data/esco/README.md for download steps):
+Expects these files in ESCO_DATA_DIR (see README.md "Data acquisition" for download steps):
     occupations_it.csv
     skills_it.csv
     occupationSkillRelations.csv
@@ -24,7 +24,7 @@ def _require(*candidates: str):
             return p
     sys.exit(
         f"Missing ESCO file (looked for {', '.join(candidates)}) in {ESCO_DATA_DIR}\n"
-        "See data/esco/README.md for download steps."
+        "See README.md (Data acquisition) for download steps."
     )
 
 

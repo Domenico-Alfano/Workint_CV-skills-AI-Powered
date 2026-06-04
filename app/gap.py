@@ -7,13 +7,14 @@ import json
 from functools import lru_cache
 
 import numpy as np
+from rapidfuzz import fuzz
 from sqlalchemy import text
 
 from .config import COVER_THRESHOLD, engine, model
 from .models import BenchmarkGap, GapResult, SkillMatch
 
-# A free-text target job resolves to a benchmark category when similarity >= this.
 RESOLVE_MIN_SCORE = 0.55
+RESOLVE_ALPHA = 0.5     # same weight as classify_categories.py
 
 
 class TargetNotFound(Exception):
@@ -33,12 +34,14 @@ def _category_index():
 
 
 def resolve_category(job_text: str):
-    """Map a free-text job (e.g. 'Cuoca') to the nearest benchmark category_id, or None."""
+    """Map a free-text job to the nearest benchmark category via hybrid (embedding + lexical)."""
     ids, labels, emb = _category_index()
     q = model().encode([job_text], normalize_embeddings=True)[0]
-    sims = emb @ q
-    j = int(np.argmax(sims))
-    score = float(sims[j])
+    sem = emb @ q
+    lex = np.array([fuzz.WRatio(job_text, l) / 100.0 for l in labels], dtype=np.float32)
+    combined = RESOLVE_ALPHA * sem + (1 - RESOLVE_ALPHA) * lex
+    j = int(np.argmax(combined))
+    score = float(combined[j])
     return (ids[j], labels[j], score) if score >= RESOLVE_MIN_SCORE else (None, None, score)
 
 
@@ -63,14 +66,13 @@ def _load_benchmark(category_id: int | None, job_category: str | None) -> dict:
     if not job_category:
         raise TargetNotFound("Provide target_category_id or target_job_category.")
 
-    # Try exact (case-insensitive) match first, then fall back to nearest-category resolution.
     row = _by("lower(job_category) = lower(:v)", {"v": job_category})
     if row:
-        return dict(row)
+        return dict(row) | {"_target_confidence": 1.0}
     cid, label, score = resolve_category(job_category)
     if cid is None:
         raise TargetNotFound(f"No benchmark close to {job_category!r} (best score {score:.2f}).")
-    return dict(_by("category_id = :v", {"v": cid}))
+    return dict(_by("category_id = :v", {"v": cid})) | {"_target_confidence": round(score, 3)}
 
 
 def _gap(source: str, occupation_label: str | None, bench_labels: list[str],
@@ -111,10 +113,15 @@ def analyze(worker_skills: list[str], category_id: int | None = None,
     else:
         esco_sims = cp_sims = None
 
-    return GapResult(
+    from .llm import generate_report
+    conf = bm.get("_target_confidence")
+    result = GapResult(
         category_id=bm["category_id"],
         job_category=bm["job_category"],
+        target_confidence=None if conf == 1.0 else conf,
         n_worker_skills=len(worker_skills),
         esco=_gap("esco", bm["occupation_label_it"], esco_labels, worker_skills, esco_sims),
         cp2021=_gap("cp2021", bm["cp2021_label"], cp_labels, worker_skills, cp_sims),
     )
+    result.report = generate_report(result)
+    return result

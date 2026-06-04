@@ -24,14 +24,10 @@ from .models import WorkerProfile
 
 # ---- Flow 1: extractor output -> WorkerProfile -----------------------------------------
 
-# Keys cover the real Workint extractor output (competenze_tecniche/_soft, lingue, …) plus
-# generic fallbacks.
+# Keys cover the real Workint extractor output (competenze_tecniche/_soft) plus fallbacks.
 _SKILL_KEYS = ("competenze_tecniche", "competenze_soft", "skills", "competenze", "skill",
                "hard_skills", "soft_skills", "abilita")
 _ROLE_KEYS = ("role", "ruolo", "professione", "job_title", "current_role", "qualifica")
-_LANG_KEYS = ("lingue", "languages", "language")
-_EDU_KEYS = ("istruzione_formazione", "education", "istruzione", "titolo_studio", "studi")
-_EXP_KEYS = ("esperienza_professionale", "experience", "esperienza", "esperienze")
 
 
 def _as_skill_list(v) -> list[str]:
@@ -64,7 +60,7 @@ def _first(data: dict, keys) -> object:
 
 
 def profile_from_extracted(data: dict) -> WorkerProfile:
-    """Map an extractor's (loosely-shaped) JSON output to a WorkerProfile."""
+    """Map the extractor's JSON output to a WorkerProfile (competenze_tecniche/_soft -> skills)."""
     if isinstance(data.get("data"), dict):   # some extractors nest under "data"
         data = data["data"]
     skills: list[str] = []
@@ -72,69 +68,7 @@ def profile_from_extracted(data: dict) -> WorkerProfile:
         if k in data:
             skills += _as_skill_list(data[k])
     role = _first(data, _ROLE_KEYS)
-    return WorkerProfile(
-        skills=list(dict.fromkeys(skills)),  # dedup, keep order
-        role=str(role) if role else None,
-        experience=(str(_first(data, _EXP_KEYS)) if _first(data, _EXP_KEYS) else None),
-        education=(str(_first(data, _EDU_KEYS)) if _first(data, _EDU_KEYS) else None),
-        languages=_as_skill_list(_first(data, _LANG_KEYS)),
-    )
-
-
-# The real extractor returns MARKDOWN ("formattate in markdown per ogni categoria"), so we
-# parse sections by heading. Heading keywords are matched loosely (exact structure TBD).
-_HEADING_GROUPS = {
-    "skills": ("compet", "skill", "abilit", "conoscenz"),
-    "languages": ("lingu", "language"),
-    "experience": ("esperienz", "experience", "professional"),
-    "education": ("istruzione", "education", "formazione", "studi", "titol"),
-    "role": ("ruolo", "professione", "qualifica", "obiettivo", "profilo"),
-}
-
-
-def _markdown_sections(md: str) -> dict[str, list[str]]:
-    """Split markdown into {heading_text: [content lines]} (heading = #..###### or **bold**)."""
-    sections: dict[str, list[str]] = {}
-    current = "_preamble"
-    sections[current] = []
-    for line in md.splitlines():
-        m = re.match(r"^\s{0,3}#{1,6}\s+(.*\S)\s*$", line) or re.match(r"^\s*\*\*(.+?)\*\*\s*:?\s*$", line)
-        if m:
-            current = m.group(1).strip().lower()
-            sections.setdefault(current, [])
-        else:
-            sections[current].append(line)
-    return sections
-
-
-def _section_items(lines: list[str]) -> list[str]:
-    """Bullet/numbered items, else comma/newline-split text."""
-    items: list[str] = []
-    for ln in lines:
-        b = re.match(r"^\s*(?:[-*•·]|\d+[.)])\s+(.*\S)", ln)
-        if b:
-            items.append(b.group(1))
-    if items:
-        return [re.sub(r"\*\*|__", "", s).strip() for s in items if s.strip()]
-    return _as_skill_list(" ".join(lines))
-
-
-def profile_from_markdown(md: str) -> WorkerProfile:
-    """Parse the extractor's markdown into a WorkerProfile (skills drive the gap)."""
-    sections = _markdown_sections(md or "")
-    picked: dict[str, list[str]] = {k: [] for k in _HEADING_GROUPS}
-    for heading, lines in sections.items():
-        for field, kws in _HEADING_GROUPS.items():
-            if any(kw in heading for kw in kws):
-                picked[field] += _section_items(lines)
-    role = picked["role"][0] if picked["role"] else None
-    return WorkerProfile(
-        skills=list(dict.fromkeys(picked["skills"])),
-        role=role,
-        experience=(" ".join(picked["experience"])[:1000] or None),
-        education=(" ".join(picked["education"])[:1000] or None),
-        languages=list(dict.fromkeys(picked["languages"])),
-    )
+    return WorkerProfile(skills=list(dict.fromkeys(skills)), role=str(role) if role else None)
 
 
 class ExtractorError(Exception):
@@ -160,9 +94,9 @@ def call_extractor(file_bytes: bytes, filename: str = "cv.pdf"):
     if resp.status_code != 200:
         raise ExtractorError(f"Extractor returned {resp.status_code}: {resp.text[:200]}")
     try:
-        return resp.json()          # dict of CV fields (or str for markdown variants)
-    except ValueError:
-        return resp.text
+        return resp.json()          # dict of CV fields
+    except ValueError as e:
+        raise ExtractorError("Extractor did not return JSON.") from e
 
 
 # ---- Flow 2: workers table -> WorkerProfile --------------------------------------------

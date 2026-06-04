@@ -5,7 +5,6 @@
 
 Deterministic lookups over the version-pinned ESCO snapshot + the CP2021/INAPP data.
 Reflects current mappings, so re-run after each review pass (import_review.py) or refetch.
-The postings demand overlay (demand_skills) needs the LLM and is left empty here.
 """
 import os
 
@@ -28,11 +27,10 @@ _SKILLS_SUBQUERY = """
 INSERT_SQL = f"""
 INSERT INTO job_benchmark
     (category_id, job_category, occupation_uri, occupation_label_it, isco_code,
-     essential_skills, optional_skills, demand_skills,
-     n_essential, n_optional, n_demand, esco_version, generated_at)
+     essential_skills, optional_skills, n_essential, n_optional, esco_version, generated_at)
 SELECT m.category_id, m.job_category, m.occupation_uri, o.preferred_label_it, o.isco_code,
-       COALESCE(ess.skills, '[]'::jsonb), COALESCE(opt.skills, '[]'::jsonb), '[]'::jsonb,
-       COALESCE(ess.n, 0), COALESCE(opt.n, 0), 0, :ver, now()
+       COALESCE(ess.skills, '[]'::jsonb), COALESCE(opt.skills, '[]'::jsonb),
+       COALESCE(ess.n, 0), COALESCE(opt.n, 0), :ver, now()
 FROM job_occupation_map m
 JOIN job_category c   ON c.category_id = m.category_id AND c.in_benchmark
 JOIN esco_occupation o ON o.occupation_uri = m.occupation_uri

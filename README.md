@@ -1,123 +1,210 @@
 # CV-skills-AI-Powered
 
-Skills-benchmark module for the **Workint** platform. Builds a **deterministic** per-job
-benchmark (required skills for each occupation) from the version-pinned **ESCO** taxonomy,
-then compares worker CVs against it to produce gap + training reports.
+Skills-gap module for the **Workint** staffing platform. It builds a **deterministic
+per-job skills benchmark** from authoritative taxonomies (EU **ESCO** + Italian **CP2021 /
+INAPP**), then compares a worker's CV against the benchmark for their target job and returns
+a structured gap + an LLM-written report (strengths, gaps, recommended *formazione*).
 
-> Design rationale and roadmap live in [DESIGN_NOTES.md](DESIGN_NOTES.md). This README is
-> the run guide. We are at **Stage A: the deterministic foundation** (load ESCO + mirror
-> jobs). Classification (job → ESCO) and the benchmark materialization are Stage B/C.
+> **Architecture note:** this is a backend module. The production UI is Workint's Angular
+> app, which calls the two REST endpoints below. FastAPI's Swagger UI at `/docs` is the test
+> frontend. Design history & rationale live in [DESIGN_NOTES.md](DESIGN_NOTES.md).
+
+---
+
+## How it works
+
+Two phases:
+
+**A. Build the benchmark (offline, periodic).** Reproducible, no LLM:
+```
+offerte_lavoro postings ──► distinct job_category (snapshot window)
+                                   │
+              ┌────────────────────┴─────────────────────┐
+        ESCO (EU)                                   CP2021 (ISTAT)
+   classify → occupation                       classify → profession
+   essential/optional skills                   INAPP API competences
+              └────────────────────┬─────────────────────┘
+                              job_benchmark   (one row per job_category)
+```
+
+**B. Analyze a worker (online, per request).** Deterministic gap + LLM report:
+```
+CV (PDF) ─► extractor ─┐
+                       ├─► worker skills ─► embed & match vs job_benchmark ─► gap + report
+worker_id ─► workers ──┘                    (target job fuzzy-resolved)
+```
+
+The **gap** (covered / missing skills, coverage %) is deterministic (sentence-transformer
+cosine match). Only the **narrative report** uses an LLM.
+
+---
+
+## Tech stack
+
+Python 3.12 · FastAPI · PostgreSQL (SQLAlchemy) · sentence-transformers (`mpnet`
+multilingual) + rapidfuzz · OpenAI-compatible LLM (Groq / OpenAI). Aligns with Workint's
+backend stack. See [requirements.txt](requirements.txt).
+
+---
 
 ## Prerequisites
 
-- Docker (for local Postgres)
-- Python 3.12 (`py -3.12` on Windows)
+- **Docker** (local Postgres for the benchmark DB)
+- **Python 3.12** (`py -3.12` on Windows)
+- Network access to: the external Postgres (`workint-clone`), the CV extractor
+  (`ai-services.workint.expleoitalia.it`), and the LLM provider (Groq/OpenAI).
 
 ## Setup
 
 ```bash
-# 1. Local Postgres
-docker compose up -d
+docker compose up -d                       # local Postgres on :5433
 
-# 2. Python env + deps
 py -3.12 -m venv .venv
-.venv\Scripts\activate            # Windows
+.venv\Scripts\activate                     # Windows
 pip install -r requirements.txt
 
-# 3. Config
-copy .env.example .env            # then edit .env with your external DB credentials
-
-# 4. Create the schema locally
-python scripts/init_db.py
+copy .env.example .env                      # then fill in real values (see Configuration)
+python scripts/init_db.py                   # create the schema
 ```
 
-## Load data
+## Data acquisition (one-time, manual downloads)
+
+Both taxonomies are downloaded once and version-pinned; the files are **gitignored**.
+
+**ESCO** → into `data/esco/` (from <https://esco.ec.europa.eu/en/use-esco/download>):
+select **v1.2.0**, language **Italian (it)**, format **CSV**, accept terms, then copy these
+3 files: `occupations_it.csv`, `skills_it.csv`, `occupationSkillRelations_it.csv`.
+
+**CP2021** → into `data/cp2021/` (from <https://www.istat.it/it/archivio/18132>):
+`CP2021.xlsx` (the classification with the `quinto_digit` sheet). CP2021 *skills* are not in
+the file — they come live from the INAPP API (`/extract` of competences) during the build.
+
+## Build the benchmark
+
+Run once (and whenever you refresh the data / re-snapshot postings):
 
 ```bash
-# ESCO — do the one-time manual download first (see data/esco/README.md), then:
-python scripts/load_esco.py
-
-# Snapshot distinct offerte_lavoro.job_category (+ counts) within the date window
-# into local Postgres. Window/threshold are set in .env (DATE_FROM, MIN_POSTINGS, ...):
-python scripts/mirror_categories.py
+python scripts/load_esco.py            # ESCO occupations + skills + relations
+python scripts/load_cp2021.py          # 813 CP2021 professions + voci (match labels)
+python scripts/mirror_categories.py    # snapshot distinct offerte_lavoro.job_category
+python scripts/classify_categories.py  # job_category -> ESCO occupation  (hybrid match)
+python scripts/classify_cp2021.py      # job_category -> CP2021 profession (hybrid match)
+python scripts/fetch_cp2021_skills.py  # INAPP API -> CP2021 competences per profession
+python scripts/materialize_benchmark.py  # -> job_benchmark (one row per category)
 ```
 
-## Classify categories -> ESCO, then review (Stage B)
-
+Optional human review of the classification (low-confidence rows are flagged):
 ```bash
-# Hybrid match (mpnet embeddings + rapidfuzz lexical) each in_benchmark category to an
-# ESCO occupation; stores top-5 candidates + a needs_review flag in job_occupation_map:
-python scripts/classify_categories.py
-
-# Export the mappings to data/review/job_occupation_review.csv (flagged rows first):
-python scripts/export_review.py
-#   -> open the CSV, set `pick` (1-5) or `correct_uri` per row to correct mappings
-
-# Persist your review decisions back into job_occupation_map:
-python scripts/import_review.py
+python scripts/export_review.py   # -> data/review/job_occupation_review.csv (edit it)
+python scripts/import_review.py   # apply your corrections, then re-run materialize
 ```
 
-## CP2021 (ISTAT) track — the second benchmark
-
-```bash
-# Download the CP2021 files first (see data/cp2021/README.md), then:
-python scripts/load_cp2021.py        # 813 professions + voci professionali (match labels)
-python scripts/classify_cp2021.py    # hybrid match job_category -> CP2021 code (job_cp2021_map)
-python scripts/fetch_cp2021_skills.py # INAPP API -> cp2021_profession_skill (competences + scores)
-```
-
-## Materialize the benchmark (Stage C)
-
-```bash
-# One row per category with BOTH sections: ESCO essential/optional skills + CP2021 top
-# competences (skill+conoscenze by importance). Re-run after reviews/refetch.
-# (Postings demand overlay = Stage C2, needs the LLM, not yet built.)
-python scripts/materialize_benchmark.py
-```
-
-## Run the API (backend for the frontend)
+## Run the API
 
 ```bash
 python -m uvicorn app.main:app --reload --port 8077
-# then open http://127.0.0.1:8077/docs  (Swagger UI — the test frontend)
+# open http://127.0.0.1:8077/docs   (Swagger UI = test frontend)
 ```
 
-Two endpoints (target job is fuzzy-resolved to the nearest benchmark category):
-- `POST /skills-gap/analyze-cv` — **Flow 1**: upload a **PDF**; we proxy it to the external
-  CV extractor (`EXTRACTOR_URL`, header `x-access-password` = `EXTRACTOR_PASSWORD`), parse the
-  returned markdown into a profile, and return the ESCO + CP2021 gap.
-- `POST /skills-gap/analyze-worker/{id}` — **Flow 2**: reads the stored profile from the
-  external `workers` table (worker_personal_skills / worker_preferred_jobs / worker_languages)
-  and returns the gap.
+---
 
-Both return the same `GapResult` (covered / missing skills + coverage %, per benchmark),
-computed deterministically by embedding match. `GET /health` for liveness.
+## API reference (frontend contract)
 
-CORS is enabled (set `CORS_ORIGINS` for the Angular origin). PII columns in `workers`
-(name/email/phone) are never read. Set `EXTRACTOR_PASSWORD` in `.env` for Flow 1.
+Base path `/skills-gap`. Both endpoints return the same `GapResult` JSON.
 
-## Verify
+| Method & path | Input | Purpose |
+|---|---|---|
+| `POST /skills-gap/analyze-cv` | `multipart/form-data` `file=<PDF>`; query `target_category_id` *or* `target_job_category` | Ad-hoc CV: PDF → extractor → gap |
+| `POST /skills-gap/analyze-worker/{worker_id}` | path `worker_id` (int) | Stored worker (reads `workers` table) → gap |
+| `GET /health` | – | Liveness |
 
-```bash
-docker exec -it workint_skills_pg psql -U workint -d skills_benchmark -c \
-  "SELECT (SELECT count(*) FROM job_category) AS categories,
-          (SELECT count(*) FROM job_category WHERE in_benchmark) AS to_benchmark,
-          (SELECT count(*) FROM esco_occupation) AS occupations,
-          (SELECT count(*) FROM esco_skill) AS skills,
-          (SELECT count(*) FROM esco_occupation_skill) AS relations;"
+**`GapResult` response shape:**
+```jsonc
+{
+  "category_id": 14,
+  "job_category": "Cuoco",          // benchmark matched
+  "target_confidence": null,         // null = exact match; e.g. 0.64 = fuzzy (warn user)
+  "n_worker_skills": 8,
+  "esco": {                          // primary, meaningful gap
+    "source": "esco",
+    "occupation_label": "cuoco/cuoca",
+    "n_total": 50, "n_covered": 31, "coverage_pct": 62.0,
+    "covered": [ { "skill": "...", "matched_with": "<worker skill>", "score": 0.92 } ],
+    "missing": [ "pianificare i menu", "nutrizione", ... ]
+  },
+  "cp2021": { ...same shape... },    // Italian competences (transversal; see Limitations)
+  "report": {                        // null if LLM_API_KEY not set
+    "strengths": "Il candidato ...",
+    "gaps": "Le lacune principali ...",
+    "formation": [ "Corso HACCP ...", "Certificazione ...", "Corso ..." ]
+  }
+}
 ```
 
-## Tables (see [sql/schema.sql](sql/schema.sql))
+Error codes: `404` target/worker not found · `422` no skills parsed / no target job ·
+`502` extractor failed · `501` workers schema mismatch.
 
-| Table | Role |
+## For the frontend developer
+
+You only need the API base URL + the contract above. Suggested Angular rendering:
+
+- `esco.coverage_pct` → progress bar; `esco.n_covered`/`esco.n_total` → caption.
+- `esco.covered` → list of matched skills (each shows `matched_with` + `score`).
+- `esco.missing` → chips/tags of skills to acquire.
+- `report.strengths` / `report.gaps` → paragraphs; `report.formation` → `*ngFor` bullet list.
+- `report` may be `null` → guard with `*ngIf="result.report"`.
+- `target_confidence != null` → show a "we guessed the target job — confirm?" notice.
+- The two endpoints map to your two flows (PDF upload / pick existing worker).
+
+Set `CORS_ORIGINS` to the Angular origin(s).
+
+## Deployment
+
+- Serve with `uvicorn app.main:app` (prod: add `--workers N` or run under gunicorn with
+  uvicorn workers) behind the existing reverse proxy / TLS.
+- The benchmark **must be built first** (the scripts above) into the Postgres the API reads
+  (`LOCAL_DB_URL`). For prod, point `LOCAL_DB_URL` at a persistent Postgres and run the build
+  pipeline there — the local Docker DB is for dev only.
+- First request loads the `mpnet` model (~1 GB, cached after). Pre-warm by hitting `/health`
+  then one analyze call, or bake the model into the image.
+- Outbound access required: extractor host (self-signed cert → `EXTRACTOR_VERIFY_SSL=false`
+  or provide `EXTRACTOR_CA_BUNDLE`), external `workers` DB, LLM provider.
+- No Milvus needed — matching is in-process (the dataset is small).
+
+## Configuration (`.env`)
+
+| Var | Purpose |
 |---|---|
-| `job_category` | distinct `offerte_lavoro.job_category` in the snapshot window (+ counts, `in_benchmark` flag) |
-| `esco_occupation`, `esco_skill`, `esco_occupation_skill` | version-pinned ESCO snapshot |
-| `job_occupation_map` | category → ESCO occupation (the only non-deterministic step; audited) |
-| `job_benchmark` | **one row per category**: ESCO essential/optional skills + postings demand overlay (the output) |
+| `LOCAL_DB_URL` | Postgres holding the benchmark (read by the API) |
+| `EXTERNAL_JOBS_DB_URL` | Read-only external DB (`offerte_lavoro`, `workers`) |
+| `POSTINGS_TABLE`, `DATE_COLUMN`, `DATE_FROM`, `MIN_POSTINGS` | Postings snapshot window |
+| `ESCO_VERSION`, `ESCO_DATA_DIR` | ESCO pin + data dir |
+| `EXTRACTOR_URL`, `EXTRACTOR_PASSWORD`, `EXTRACTOR_VERIFY_SSL` | CV extractor (Flow 1) |
+| `WORKERS_TABLE`, `WORKERS_COL_*` | Stored-CV mapping (Flow 2) |
+| `LLM_PROVIDER`, `LLM_API_KEY`, `LLM_MODEL` | Report LLM (`groq`→`openai`, no code change) |
+| `CORS_ORIGINS` | Angular origin(s) |
 
-## Teardown
+## Project structure
 
-```bash
-docker compose down -v   # removes the local DB volume
 ```
+app/            FastAPI service
+  main.py         endpoints (analyze-cv, analyze-worker, health)
+  gap.py          deterministic gap engine + target resolution
+  sources.py      input adapters (extractor JSON / workers table)
+  llm.py          narrative report (Groq/OpenAI)
+  models.py       request/response schemas (the contract)
+  config.py       env + cached engine/model
+scripts/        offline benchmark-build pipeline (run in the order above)
+sql/schema.sql  database schema
+data/           ESCO + CP2021 downloads (gitignored)
+```
+
+## Known limitations
+
+- **CP2021 gap ≈ 0%** for concrete CV skills — its competences are transversal
+  (communication, dexterity…) and don't embedding-match task-level skills. Treat the CP2021
+  section as a *competence profile*, not a covered/missing checklist (or improve via LLM).
+- **Target resolution** is hybrid embedding+lexical but can miss Italian synonyms absent
+  from the benchmark (e.g. "Sviluppatore" when only "Software Developer" exists) →
+  `target_confidence` surfaces low-confidence matches for the UI to confirm.
+- Stored `workers` skill quality varies (some rows hold sparse/free-text skills).

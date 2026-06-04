@@ -35,7 +35,7 @@ def _load_voci() -> pd.DataFrame:
 
 def main() -> None:
     if not XLSX.exists():
-        sys.exit(f"Missing {XLSX} — see data/cp2021/README.md")
+        sys.exit(f"Missing {XLSX} — see README.md (Data acquisition)")
     df = pd.read_excel(XLSX, sheet_name="quinto_digit")[["cod_5", "nome_5", "descr_5"]]
     df = df.dropna(subset=["cod_5", "nome_5"])
     df["cod_5"] = df["cod_5"].astype(str).str.strip()

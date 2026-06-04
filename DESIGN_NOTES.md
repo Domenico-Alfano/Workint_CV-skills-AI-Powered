@@ -584,21 +584,34 @@ suggestions (LLM phase). CP2021 gap still ~0% for concrete skills (see §20).
 
 ## 22. CV extractor wired (2026-06-03)
 
-Extractor endpoint received: **`POST http://10.20.2.6:32504/extract-cv-info`** — protected
-(header `x-access-password`), `multipart/form-data` field `file` = PDF, **returns a JSON
-string of MARKDOWN** ("informazioni del CV formattate in markdown per ogni categoria"). So
-Flow 1 input is a PDF and the extractor output is markdown, NOT structured JSON.
+**VERIFIED extractor contract (2026-06-04), end-to-end test PASSED:**
+- URL: **`POST https://ai-services.workint.expleoitalia.it/extract-cv-info`** (hyphens; the
+  operationId uses underscores — don't trust it). Public host, **self-signed SSL** →
+  EXTRACTOR_VERIFY_SSL=false (or EXTRACTOR_CA_BUNDLE).
+- Auth: header **`X-Access-Password` REQUIRED** (OpenAPI marks it optional but the service
+  returns 401 without it).
+- Body: multipart `file` = PDF.
+- Response: **a structured JSON DICT (not markdown)** with keys: anagrafica, nome, cognome,
+  data_nascita, email, telefono, residenza, esperienza_professionale, istruzione_formazione,
+  certificazioni, corsi_formazione_extra, **competenze_tecniche**, **competenze_soft**,
+  **lingue**, patenti_abilitazioni, progetti, pubblicazioni_conferenze,
+  attivita_extra_volontariato. Values are markdown snippets (bullet lists / `## ` lines).
+- Same host also: `/estimate-ral-from-file` (Workint §5.6 RAL), `/classify-job-description`.
+- Its OpenAPI is at `/openapi-ai-services.json` (custom), docs at `/docs`.
 
 Wired in `app/`:
-- `config.py`: EXTRACTOR_URL (default the above), EXTRACTOR_PASSWORD (env; not yet provided).
-- `sources.py`: `call_extractor(pdf_bytes)` (POST multipart + x-access-password → markdown);
-  `profile_from_markdown(md)` — tolerant section parser (splits on #/##/**bold** headings,
-  fuzzy-maps headings to skills/languages/experience/education/role via keyword groups,
-  bullets or comma/newline items).
-- `main.py`: `POST /skills-gap/analyze-cv` now takes a **PDF upload** → call_extractor →
-  parse → gap. Added `POST /skills-gap/analyze-cv-markdown` (paste markdown; test path, no
-  password) — verified: synthetic IT CV → 4 skills parsed → Cuoco ESCO 58%.
+- `config.py`: EXTRACTOR_URL (correct default), EXTRACTOR_PASSWORD, EXTRACTOR_VERIFY (SSL).
+- `sources.py`: `call_extractor(pdf_bytes)` returns the parsed dict (verify-configurable);
+  `profile_from_extracted(dict)` maps competenze_tecniche/_soft→skills, lingue→languages,
+  esperienza/istruzione (keys in _SKILL_KEYS etc.); `_as_skill_list` strips bullets/markdown.
+  `profile_from_markdown` kept as fallback for str responses.
+- `main.py`: `POST /skills-gap/analyze-cv` (PDF upload) dispatches dict→profile_from_extracted
+  else markdown.
 
-**NEED from user:** (1) the **x-access-password** (→ EXTRACTOR_PASSWORD in .env) to call the
-real extractor; (2) a **sample of the real markdown** to confirm the actual section headings
-match the parser's keyword groups (it's tolerant but tuned to guessed headings).
+**TEST (sample_cv.pdf, target Cuoco):** HTTP 200 — 8 skills parsed, **ESCO 62% (31/50)**,
+strong matches (taglio 0.996, cottura 0.986, salse 0.948, HACCP 0.79), sensible missing
+(pianificare menu, nutrizione, sfilettare pesce). CP2021 3.3% (transversal — known, §20).
+
+**SECURITY TODO:** the password was put in `.env.example` (git-TRACKED) — move it to `.env`
+(gitignored) and restore a placeholder in `.env.example` before committing. For the test it
+was passed via env var to uvicorn, not read from either file.

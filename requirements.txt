@@ -1,15 +1,20 @@
-# Stage A: DB foundation + ESCO loader.
+# Data + DB
 SQLAlchemy>=2.0
 psycopg2-binary>=2.9
 pandas>=2.0
+numpy>=1.26
+openpyxl>=3.1          # read the CP2021 .xlsx classification
 python-dotenv>=1.0
 
-# Stage B: category -> ESCO classification (embeddings + lexical hybrid).
+# Matching (category->ESCO/CP2021 classification + skills-gap embeddings)
 sentence-transformers>=3.0
 rapidfuzz>=3.0
 
-# API layer (backend for the frontend; Swagger UI at /docs is the test frontend).
+# API (Swagger UI at /docs is the test frontend)
 fastapi>=0.110
 uvicorn[standard]>=0.29
-python-multipart>=0.0.9   # file uploads
+python-multipart>=0.0.9   # PDF upload
 requests>=2.31            # call the external CV extractor
+
+# LLM narrative report (Groq via OpenAI-compatible API; OpenAI later)
+openai>=1.30

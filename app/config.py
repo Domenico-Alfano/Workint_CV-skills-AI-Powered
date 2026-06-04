@@ -27,6 +27,13 @@ EXTRACTOR_URL = os.getenv(
     "EXTRACTOR_URL", "https://ai-services.workint.expleoitalia.it/extract-cv-info"
 )
 EXTRACTOR_PASSWORD = os.getenv("EXTRACTOR_PASSWORD")  # set in .env (header x-access-password)
+# LLM for narrative report (provider-agnostic: groq now, openai later).
+# Switch by changing LLM_PROVIDER + LLM_API_KEY + LLM_MODEL — no code change.
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq")   # groq | openai
+LLM_API_KEY = os.getenv("LLM_API_KEY")
+LLM_MODEL = os.getenv("LLM_MODEL", "llama-3.1-8b-instant")  # groq default; gpt-4o for openai
+LLM_ENABLED = bool(LLM_API_KEY)
+
 # The extractor host uses a self-signed cert; set EXTRACTOR_VERIFY_SSL=false to skip
 # verification (internal trusted service) or point EXTRACTOR_CA_BUNDLE at its CA cert.
 _verify = os.getenv("EXTRACTOR_VERIFY_SSL", "true").lower() not in ("0", "false", "no")

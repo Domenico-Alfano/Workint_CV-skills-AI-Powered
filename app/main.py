@@ -20,7 +20,7 @@ from .sources import (
     WorkersSchemaUnknown,
     call_extractor,
     load_worker,
-    profile_from_markdown,
+    profile_from_extracted,
 )
 
 app = FastAPI(
@@ -53,12 +53,14 @@ def analyze_cv(
 ) -> GapResult:
     """Flow 1: proxy the uploaded PDF to the external extractor, parse its markdown, return gap."""
     try:
-        markdown = call_extractor(file.file.read(), filename=file.filename or "cv.pdf")
+        extracted = call_extractor(file.file.read(), filename=file.filename or "cv.pdf")
     except ExtractorError as e:
         raise HTTPException(status_code=502, detail=str(e))
-    profile = profile_from_markdown(markdown)
+    if not isinstance(extracted, dict):
+        raise HTTPException(status_code=502, detail="Unexpected extractor response (expected JSON object).")
+    profile = profile_from_extracted(extracted)
     if not profile.skills:
-        raise HTTPException(status_code=422, detail="No skills parsed from the extractor markdown.")
+        raise HTTPException(status_code=422, detail="No skills parsed from the extractor output.")
     return _run(profile.skills, target_category_id, target_job_category or profile.role)
 
 
