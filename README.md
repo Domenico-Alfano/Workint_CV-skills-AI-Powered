@@ -75,6 +75,27 @@ python scripts/fetch_cp2021_skills.py # INAPP API -> cp2021_profession_skill (co
 python scripts/materialize_benchmark.py
 ```
 
+## Run the API (backend for the frontend)
+
+```bash
+python -m uvicorn app.main:app --reload --port 8077
+# then open http://127.0.0.1:8077/docs  (Swagger UI — the test frontend)
+```
+
+Two endpoints (target job is fuzzy-resolved to the nearest benchmark category):
+- `POST /skills-gap/analyze-cv` — **Flow 1**: upload a **PDF**; we proxy it to the external
+  CV extractor (`EXTRACTOR_URL`, header `x-access-password` = `EXTRACTOR_PASSWORD`), parse the
+  returned markdown into a profile, and return the ESCO + CP2021 gap.
+- `POST /skills-gap/analyze-worker/{id}` — **Flow 2**: reads the stored profile from the
+  external `workers` table (worker_personal_skills / worker_preferred_jobs / worker_languages)
+  and returns the gap.
+
+Both return the same `GapResult` (covered / missing skills + coverage %, per benchmark),
+computed deterministically by embedding match. `GET /health` for liveness.
+
+CORS is enabled (set `CORS_ORIGINS` for the Angular origin). PII columns in `workers`
+(name/email/phone) are never read. Set `EXTRACTOR_PASSWORD` in `.env` for Flow 1.
+
 ## Verify
 
 ```bash

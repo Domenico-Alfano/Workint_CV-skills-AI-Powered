@@ -535,3 +535,70 @@ suggestions are the LLM phase.
 - **Scoping caveat:** benchmark is skill-centric (ESCO/CP2021 skills). Skills gap is solid;
   education/experience/languages have no benchmark field yet → lighter/heuristic unless we
   add reference data.
+
+## 20. API backend — BUILT (2026-06-03)
+
+`app/` package (FastAPI). Frontend = production Angular (by frontendist); our test frontend =
+FastAPI Swagger at `/docs`. Run: `python -m uvicorn app.main:app --reload --port 8077`.
+- `app/config.py` — engine + lazy mpnet model (lru_cache); GAP_COVER_THRESHOLD (0.62).
+- `app/models.py` — WorkerProfile, AnalyzeProfileRequest, GapResult/BenchmarkGap/SkillMatch (the contract).
+- `app/gap.py` — deterministic engine: worker skills vs job_benchmark row; embed both, per
+  benchmark skill take best worker match, covered if cosine ≥ threshold else missing; ESCO +
+  CP2021 sections, coverage %.
+- `app/main.py` — `POST /skills-gap/analyze-profile` (WORKING), `analyze-cv` (Flow1 STUB 501),
+  `analyze-worker/{id}` (Flow2 STUB 501), `/health`.
+
+Verified: analyze-profile against Cuoco returns ESCO 54% coverage (sensible matched/missing),
+clean UTF-8. **Finding:** CP2021 gap coverage ~0% — CP2021 competences are abstract/transversal
+(Comunicare, Destrezza…) and don't embedding-match concrete CV skill phrases. → ESCO gap is the
+meaningful one; CP2021 needs different presentation (competence profile) or LLM, later.
+
+**Stubs to wire when inputs arrive:** Flow1 = call external extractor → WorkerProfile; Flow2 =
+read `workers` row + resolve target job → WorkerProfile; both then call analyze().
+Not yet: auth, CORS for the Angular origin, async, persistence of results.
+
+## 21. Both flows wired + target resolution (2026-06-03)
+
+`app/sources.py` — input adapters:
+- **Flow 1** `profile_from_extracted(data)` — tolerant mapper for the extractor's JSON
+  (handles nested `data`, Italian keys ruolo/competenze/lingue, skills as str | list[str] |
+  list[dict]). `analyze-cv` now FUNCTIONAL: post the extractor output + target → gap.
+  (Server-side call to the extractor URL still TODO pending its endpoint.)
+- **Flow 2** `load_worker(id)` — reads the REAL `workers` schema (inspected; 85 rows):
+  worker_id / worker_personal_skills / worker_preferred_jobs / worker_languages
+  (+ professional_exp/education available). PII cols never read. `analyze-worker/{id}`
+  FUNCTIONAL. Columns env-overridable (WORKERS_COL_*).
+
+Skills in `workers` are free text (newline/comma) → split into skill phrases; data quality
+varies (some junk/empty). `worker_preferred_jobs` often empty → 422 "no target"; when present
+it's a title like "Cuoca".
+
+`app/gap.py` — added **target resolution**: a free-text job ("Cuoca") → nearest benchmark
+category via embeddings (cached `_category_index`, RESOLVE_MIN_SCORE=0.55). `_load_benchmark`
+now: category_id → exact; job_category → exact then nearest-match fallback. Verified worker 5
+'Cuoca' → 'Cuoco' (0.83). CORS middleware added (CORS_ORIGINS).
+
+**Backend status: both flows functional locally.** Remaining: server-side extractor call
+(Flow 1, pending endpoint), auth, result persistence, narrative report + gap-closing
+suggestions (LLM phase). CP2021 gap still ~0% for concrete skills (see §20).
+
+## 22. CV extractor wired (2026-06-03)
+
+Extractor endpoint received: **`POST http://10.20.2.6:32504/extract-cv-info`** — protected
+(header `x-access-password`), `multipart/form-data` field `file` = PDF, **returns a JSON
+string of MARKDOWN** ("informazioni del CV formattate in markdown per ogni categoria"). So
+Flow 1 input is a PDF and the extractor output is markdown, NOT structured JSON.
+
+Wired in `app/`:
+- `config.py`: EXTRACTOR_URL (default the above), EXTRACTOR_PASSWORD (env; not yet provided).
+- `sources.py`: `call_extractor(pdf_bytes)` (POST multipart + x-access-password → markdown);
+  `profile_from_markdown(md)` — tolerant section parser (splits on #/##/**bold** headings,
+  fuzzy-maps headings to skills/languages/experience/education/role via keyword groups,
+  bullets or comma/newline items).
+- `main.py`: `POST /skills-gap/analyze-cv` now takes a **PDF upload** → call_extractor →
+  parse → gap. Added `POST /skills-gap/analyze-cv-markdown` (paste markdown; test path, no
+  password) — verified: synthetic IT CV → 4 skills parsed → Cuoco ESCO 58%.
+
+**NEED from user:** (1) the **x-access-password** (→ EXTRACTOR_PASSWORD in .env) to call the
+real extractor; (2) a **sample of the real markdown** to confirm the actual section headings
+match the parser's keyword groups (it's tolerant but tuned to guessed headings).
