@@ -70,8 +70,29 @@ Formato richiesto (JSON, in italiano, tono professionale):
     # Strip markdown fences if the model wraps the JSON anyway.
     raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.MULTILINE).strip()
     data = json.loads(raw)
+
+    def _to_str(v) -> str:
+        if isinstance(v, str):
+            return v
+        if isinstance(v, dict):
+            return " ".join(str(x) for x in v.values() if x)
+        if isinstance(v, list):
+            return " ".join(str(x) for x in v if x)
+        return str(v)
+
+    def _to_str_list(v) -> list[str]:
+        if isinstance(v, list):
+            return [
+                item.get("nome") or item.get("name") or _to_str(item)
+                if isinstance(item, dict) else str(item)
+                for item in v
+            ]
+        if isinstance(v, str):
+            return [v]
+        return []
+
     return Report(
-        strengths=data.get("strengths", ""),
-        gaps=data.get("gaps", ""),
-        formation=data.get("formation", []),
+        strengths=_to_str(data.get("strengths", "")),
+        gaps=_to_str(data.get("gaps", "")),
+        formation=_to_str_list(data.get("formation", [])),
     )

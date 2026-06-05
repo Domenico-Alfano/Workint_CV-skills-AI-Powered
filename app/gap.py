@@ -16,6 +16,52 @@ from .models import BenchmarkGap, GapResult, SkillMatch
 RESOLVE_MIN_SCORE = 0.55
 RESOLVE_ALPHA = 0.5     # same weight as classify_categories.py
 
+# Italian job-title synonyms that the hybrid matcher misses (benchmark uses different
+# labels, often English). Checked case-insensitively against the whole input string.
+_SYNONYMS: list[tuple[str, str]] = [
+    ("sviluppator", "Software Developer"),
+    ("programmator", "Programmatore"),
+    ("informatico", "Software Developer"),
+    ("sistemista",  "Sistemista"),
+    ("devops",      "Software Developer"),
+    ("full stack",  "Software Developer"),
+    ("frontend",    "Software Developer"),
+    ("backend",     "Software Developer"),
+    ("data scientist", "Data Scientist"),
+    ("data analyst",   "Data Analyst"),
+    ("cuoc",        "Cuoco"),
+    ("chef",        "Cuoco"),
+    ("infermier",   "Infermiere"),
+    ("contabil",    "Contabile"),
+    ("ragionier",   "Contabile"),
+    ("elettricist", "Elettricista"),
+    ("idraulic",    "Idraulico"),
+    ("muratore",    "Muratore"),
+    ("magazzin",    "Magazziniere"),
+    ("commess",     "Commesso/a"),
+    ("camerier",    "Cameriere/a"),
+    ("parrucchier", "Parrucchiere/a"),
+    ("meccanico",   "Meccanico"),
+    ("autista",     "Autista"),
+    ("operaio",     "Operaio di Produzione"),
+    ("saldatore",   "Saldatore"),
+    ("falegname",   "Falegname"),
+    ("giardinier",  "Giardiniere"),
+    ("insegnante",  "Insegnante"),
+    ("medico",      "Medico"),
+    ("avvocat",     "Avvocato"),
+    ("architett",   "Architetto"),
+    ("geometra",    "Geometra"),
+    ("commerciale", "Impiegato Commerciale"),
+    ("marketing",   "Digital Marketing Specialist"),
+    ("hr ",         "Risorse Umane/HR"),
+    ("risorse umane", "Risorse Umane/HR"),
+    ("vendit",      "Venditore"),
+    ("receptionist","Receptionist"),
+    ("segretari",   "Assistente Amministrativo"),
+    ("amministrat", "Assistente Amministrativo"),
+]
+
 
 class TargetNotFound(Exception):
     pass
@@ -34,8 +80,18 @@ def _category_index():
 
 
 def resolve_category(job_text: str):
-    """Map a free-text job to the nearest benchmark category via hybrid (embedding + lexical)."""
+    """Map a free-text job to the nearest benchmark category (synonym lookup then hybrid)."""
     ids, labels, emb = _category_index()
+    lower = job_text.lower()
+
+    # Fast synonym pass: if the input matches a known Italian stem, map to its target label.
+    for stem, target_label in _SYNONYMS:
+        if stem in lower:
+            for i, lbl in enumerate(labels):
+                if lbl.lower() == target_label.lower():
+                    return (ids[i], labels[i], 1.0)
+            break  # stem matched but target not in benchmark — fall through to hybrid
+
     q = model().encode([job_text], normalize_embeddings=True)[0]
     sem = emb @ q
     lex = np.array([fuzz.WRatio(job_text, l) / 100.0 for l in labels], dtype=np.float32)

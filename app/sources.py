@@ -107,7 +107,6 @@ _WORKER_COLS = {
     "skills": os.getenv("WORKERS_COL_SKILLS", "worker_personal_skills"),
     "role": os.getenv("WORKERS_COL_ROLE", "worker_preferred_jobs"),
     "target_job": os.getenv("WORKERS_COL_TARGET_JOB", "worker_preferred_jobs"),
-    "languages": os.getenv("WORKERS_COL_LANGUAGES", "worker_languages"),
 }
 
 
@@ -139,7 +138,7 @@ def load_worker(worker_id: int) -> tuple[WorkerProfile, str | None]:
                 "Set WORKERS_COL_* env vars to map the real schema."
             )
         sel = [_WORKER_COLS["id"], _WORKER_COLS["skills"]]
-        sel += [_WORKER_COLS[k] for k in ("role", "target_job", "languages") if _WORKER_COLS[k] in cols]
+        sel += [_WORKER_COLS[k] for k in ("role", "target_job") if _WORKER_COLS[k] in cols]
         row = c.execute(
             text(f"SELECT {', '.join(sel)} FROM {WORKERS_TABLE} WHERE {_WORKER_COLS['id']} = :id"),
             {"id": worker_id},
@@ -150,7 +149,6 @@ def load_worker(worker_id: int) -> tuple[WorkerProfile, str | None]:
     profile = WorkerProfile(
         skills=_as_skill_list(row.get(_WORKER_COLS["skills"])),
         role=(str(row[_WORKER_COLS["role"]]) if row.get(_WORKER_COLS["role"]) else None),
-        languages=_as_skill_list(row.get(_WORKER_COLS["languages"])),
     )
     target = row.get(_WORKER_COLS["target_job"])
     return profile, (str(target) if target else (profile.role or None))
