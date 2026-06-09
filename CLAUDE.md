@@ -17,6 +17,9 @@ and compares a worker CV against it → gap + LLM report. FastAPI backend; Angul
 
 ## Gotchas (read before debugging)
 - mpnet (~400MB) is pre-warmed at startup (lifespan in `main.py`) → first request already fast.
+- Benchmark label embeddings are precomputed offline to `data/cache/label_emb_<model>.npz`
+  (`scripts/precompute_embeddings.py`) and loaded into `gap._EMB_STORE` at startup, so requests
+  stay fast across restarts. Re-run that script after a benchmark rebuild or model change.
 - Extractor host has a self-signed cert → `EXTRACTOR_VERIFY_SSL=false`.
 - `/tmp` differs between git-bash and Windows python — pipe stdin, don't share temp files.
 - CP2021 (transversal competences) uses a higher cover threshold (0.68 vs ESCO 0.62) to kill

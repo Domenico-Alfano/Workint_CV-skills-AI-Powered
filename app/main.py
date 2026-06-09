@@ -16,7 +16,7 @@ from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import CORS_ORIGINS
-from .gap import TargetNotFound, analyze, _category_index
+from .gap import TargetNotFound, analyze, _category_index, _load_emb_store
 from .models import GapResult
 from .sources import (
     ExtractorError,
@@ -30,9 +30,11 @@ from .sources import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Pre-warm: load model + category index so the first real request is fast.
+    # Pre-warm: load model, the precomputed label embeddings, and the category index so
+    # the first real request is fast even right after a restart.
     from .config import model
     model()
+    _load_emb_store()
     _category_index()
     yield
 

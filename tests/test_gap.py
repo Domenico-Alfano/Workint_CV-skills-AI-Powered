@@ -105,3 +105,40 @@ def test_unresolvable_target_raises_with_candidates(_index_ready):
     with pytest.raises(TargetNotFound) as exc:
         analyze(worker_skills=["Python"], job_category="xqzblarg foobar nonsense 123")
     assert exc.value.candidates  # FE gets a 'did you mean' list even on failure
+
+
+def test_emb_store_loads_from_npz(tmp_path, monkeypatch):
+    """Persistence round-trip: a saved .npz is read back into the store (no model/DB)."""
+    import numpy as np
+    import app.gap as gap
+    f = tmp_path / "label_emb_test.npz"
+    np.savez(f, labels=np.array(["alpha", "beta"]),
+             embeddings=np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32))
+    monkeypatch.setattr(gap, "_EMB_FILE", f)
+    monkeypatch.setattr(gap, "_EMB_STORE", {})
+    monkeypatch.setattr(gap, "_emb_loaded", False)
+    store = gap._load_emb_store()
+    assert set(store) == {"alpha", "beta"}
+    assert np.array_equal(store["alpha"], [1.0, 0.0])
+
+
+@pytest.mark.integration
+def test_encode_memoizes_in_store(_index_ready):
+    import numpy as np
+    from app.gap import _encode, _load_emb_store
+    store = _load_emb_store()
+    v1 = _encode(("python", "sql"))
+    assert "python" in store and "sql" in store     # encoded misses got memoized
+    v2 = _encode(("python", "sql"))
+    assert np.array_equal(v1, v2)                    # served identically from the store
+
+
+@pytest.mark.integration
+def test_repeated_analyze_is_deterministic(_index_ready, monkeypatch):
+    import app.config
+    monkeypatch.setattr(app.config, "LLM_ENABLED", False)
+    from app.gap import analyze
+    r1 = analyze(worker_skills=["Python", "SQL"], job_category="Sviluppatore")
+    r2 = analyze(worker_skills=["Python", "SQL"], job_category="Sviluppatore")
+    assert r1.esco.coverage_pct == r2.esco.coverage_pct
+    assert r1.cp2021.coverage_pct == r2.cp2021.coverage_pct

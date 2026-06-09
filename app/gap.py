@@ -3,15 +3,17 @@
 For each benchmark skill we find the worker's most similar skill (cosine over mpnet
 embeddings); it's 'covered' when similarity >= COVER_THRESHOLD, else 'missing'. No LLM.
 """
+import hashlib
 import json
 import logging
 from functools import lru_cache
+from pathlib import Path
 
 import numpy as np
 from rapidfuzz import fuzz
 from sqlalchemy import text
 
-from .config import COVER_THRESHOLD, CP2021_COVER_THRESHOLD, engine, model
+from .config import COVER_THRESHOLD, CP2021_COVER_THRESHOLD, EMBEDDING_MODEL, engine, model
 from .models import BenchmarkGap, GapResult, SkillMatch
 
 log = logging.getLogger(__name__)
@@ -75,6 +77,44 @@ class TargetNotFound(Exception):
     def __init__(self, message: str, candidates: list[dict] | None = None):
         super().__init__(message)
         self.candidates = candidates or []
+
+
+# Persistent per-label embedding store. Benchmark labels are static (built offline), so
+# we precompute them once into an .npz and load it here — surviving restarts and avoiding
+# the 306x duplication a per-category cache would incur (CP2021 labels are shared).
+# The filename is keyed on the model so a model swap can't load stale vectors.
+_CACHE_DIR = Path(__file__).resolve().parent.parent / "data" / "cache"
+_EMB_FILE = _CACHE_DIR / f"label_emb_{hashlib.md5(EMBEDDING_MODEL.encode()).hexdigest()[:12]}.npz"
+_EMB_STORE: dict[str, np.ndarray] = {}   # text -> embedding; persists across requests
+_emb_loaded = False
+
+
+def _load_emb_store() -> dict[str, np.ndarray]:
+    """Lazily fill the in-memory store from the precomputed .npz (if present). Safe no-op
+    when the file is missing — `_encode` then just encodes on demand."""
+    global _emb_loaded
+    if not _emb_loaded:
+        _emb_loaded = True
+        if _EMB_FILE.exists():
+            data = np.load(_EMB_FILE)
+            for lbl, vec in zip(data["labels"], data["embeddings"]):
+                _EMB_STORE[str(lbl)] = vec
+            log.info("loaded %d precomputed embeddings from %s", len(_EMB_STORE), _EMB_FILE.name)
+    return _EMB_STORE
+
+
+def _encode(texts: tuple[str, ...]) -> np.ndarray:
+    """Embed `texts` (order preserved) via the store; encode only the misses — labels absent
+    from the .npz or novel worker skills — and memoize them. Returns (len(texts), dim)."""
+    if not texts:
+        return np.empty((0, 0), dtype=np.float32)
+    store = _load_emb_store()
+    missing = [t for t in dict.fromkeys(texts) if t not in store]   # unique, order-stable
+    if missing:
+        vecs = np.asarray(model().encode(missing, normalize_embeddings=True))
+        for t, v in zip(missing, vecs):
+            store[t] = v
+    return np.stack([store[t] for t in texts])
 
 
 @lru_cache(maxsize=1)
@@ -196,14 +236,10 @@ def analyze(worker_skills: list[str], category_id: int | None = None,
     cp_labels = _labels(bm["cp2021_skills"])
 
     worker_skills = [s.strip() for s in worker_skills if s and s.strip()]
-    all_bench = esco_labels + cp_labels
-    if worker_skills and all_bench:
-        m = model()
-        w = m.encode(worker_skills, normalize_embeddings=True)
-        b = m.encode(all_bench, normalize_embeddings=True)
-        sims_all = b @ w.T
-        esco_sims = sims_all[: len(esco_labels)]
-        cp_sims = sims_all[len(esco_labels):]
+    if worker_skills and (esco_labels or cp_labels):
+        w = _encode(tuple(worker_skills))                       # small, sometimes cached
+        esco_sims = _encode(tuple(esco_labels)) @ w.T if esco_labels else None  # labels cached
+        cp_sims = _encode(tuple(cp_labels)) @ w.T if cp_labels else None
     else:
         esco_sims = cp_sims = None
 

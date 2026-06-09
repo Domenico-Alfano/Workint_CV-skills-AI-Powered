@@ -91,6 +91,7 @@ python scripts/classify_categories.py  # job_category -> ESCO occupation  (hybri
 python scripts/classify_cp2021.py      # job_category -> CP2021 profession (hybrid match)
 python scripts/fetch_cp2021_skills.py  # INAPP API -> CP2021 competences per profession
 python scripts/materialize_benchmark.py  # -> job_benchmark (one row per category)
+python scripts/precompute_embeddings.py  # -> data/cache/label_emb_<model>.npz (API loads it at startup)
 ```
 
 Optional human review of the classification (low-confidence rows are flagged):
