@@ -27,6 +27,19 @@ class TestLabels:
         assert _labels([{"label": "Python"}, {"foo": "bar"}, {"label": ""}]) == ["Python"]
 
 
+class TestTargetNotFound:
+    def test_carries_candidates(self):
+        from app.gap import TargetNotFound
+        cands = [{"category_id": 1, "job_category": "X", "score": 0.4}]
+        e = TargetNotFound("nope", candidates=cands)
+        assert e.candidates == cands
+        assert str(e) == "nope"
+
+    def test_candidates_default_to_empty_list(self):
+        from app.gap import TargetNotFound
+        assert TargetNotFound("nope").candidates == []
+
+
 @pytest.fixture(scope="session")
 def _index_ready():
     """Skip integration tests unless the DB + model are actually available."""
@@ -74,3 +87,21 @@ def test_cp2021_threshold_suppresses_proper_noun_false_positives(_index_ready, m
     covered_cp = {m.skill.lower() for m in result.cp2021.covered}
     assert "resistenza" not in covered_cp
     assert "forza del busto" not in covered_cp
+
+
+@pytest.mark.integration
+def test_suggest_categories_returns_sorted_topk(_index_ready):
+    from app.gap import suggest_categories
+    cands = suggest_categories("Sviluppatore", k=3)
+    assert len(cands) == 3
+    scores = [c["score"] for c in cands]
+    assert scores == sorted(scores, reverse=True)
+    assert all({"category_id", "job_category", "score"} <= c.keys() for c in cands)
+
+
+@pytest.mark.integration
+def test_unresolvable_target_raises_with_candidates(_index_ready):
+    from app.gap import analyze, TargetNotFound
+    with pytest.raises(TargetNotFound) as exc:
+        analyze(worker_skills=["Python"], job_category="xqzblarg foobar nonsense 123")
+    assert exc.value.candidates  # FE gets a 'did you mean' list even on failure

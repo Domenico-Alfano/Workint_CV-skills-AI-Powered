@@ -57,7 +57,11 @@ def _run(skills: list[str], category_id: Optional[int], job_category: Optional[s
     try:
         return analyze(worker_skills=skills, category_id=category_id, job_category=job_category)
     except TargetNotFound as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        # Carry best-guess categories so the FE can show a "did you mean…?" picker;
+        # the user re-submits with target_category_id.
+        raise HTTPException(
+            status_code=404, detail={"message": str(e), "candidates": e.candidates}
+        )
 
 
 @app.post("/skills-gap/analyze-cv", response_model=GapResult)

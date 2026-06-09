@@ -67,7 +67,14 @@ _SYNONYMS: list[tuple[str, str]] = [
 
 
 class TargetNotFound(Exception):
-    pass
+    """Raised when no benchmark resolves for the requested target.
+
+    Carries `candidates` (best-guess categories) so the API can offer the FE a
+    'did you mean…?' picker instead of a dead-end 404.
+    """
+    def __init__(self, message: str, candidates: list[dict] | None = None):
+        super().__init__(message)
+        self.candidates = candidates or []
 
 
 @lru_cache(maxsize=1)
@@ -82,9 +89,20 @@ def _category_index():
     return ids, labels, np.asarray(emb)
 
 
+def _hybrid_scores(job_text: str):
+    """Hybrid (semantic + lexical) score of `job_text` against every benchmark category.
+    Returns (ids, labels, combined) where combined is a per-category score array."""
+    ids, labels, emb = _category_index()
+    q = model().encode([job_text], normalize_embeddings=True)[0]
+    sem = emb @ q
+    lex = np.array([fuzz.WRatio(job_text, l) / 100.0 for l in labels], dtype=np.float32)
+    combined = RESOLVE_ALPHA * sem + (1 - RESOLVE_ALPHA) * lex
+    return ids, labels, combined
+
+
 def resolve_category(job_text: str):
     """Map a free-text job to the nearest benchmark category (synonym lookup then hybrid)."""
-    ids, labels, emb = _category_index()
+    ids, labels, _ = _category_index()
     lower = job_text.lower()
 
     # Fast synonym pass: if the input matches a known Italian stem, map to its target label.
@@ -96,10 +114,7 @@ def resolve_category(job_text: str):
                     return (ids[i], labels[i], 1.0)
             break  # stem matched but target not in benchmark — fall through to hybrid
 
-    q = model().encode([job_text], normalize_embeddings=True)[0]
-    sem = emb @ q
-    lex = np.array([fuzz.WRatio(job_text, l) / 100.0 for l in labels], dtype=np.float32)
-    combined = RESOLVE_ALPHA * sem + (1 - RESOLVE_ALPHA) * lex
+    ids, labels, combined = _hybrid_scores(job_text)
     j = int(np.argmax(combined))
     score = float(combined[j])
     if score >= RESOLVE_MIN_SCORE:
@@ -107,6 +122,17 @@ def resolve_category(job_text: str):
         return (ids[j], labels[j], score)
     log.warning("target not resolved: %r (best score %.2f)", job_text, score)
     return (None, None, score)
+
+
+def suggest_categories(job_text: str, k: int = 3) -> list[dict]:
+    """Top-k nearest benchmark categories for a free-text job — fed to the FE as a
+    'did you mean…?' picker when resolution fails."""
+    ids, labels, combined = _hybrid_scores(job_text)
+    top = np.argsort(-combined)[:k]
+    return [
+        {"category_id": int(ids[j]), "job_category": labels[j], "score": round(float(combined[j]), 3)}
+        for j in top
+    ]
 
 
 def _labels(jsonb_value) -> list[str]:
@@ -135,7 +161,10 @@ def _load_benchmark(category_id: int | None, job_category: str | None) -> dict:
         return dict(row) | {"_target_confidence": 1.0}
     cid, label, score = resolve_category(job_category)
     if cid is None:
-        raise TargetNotFound(f"No benchmark close to {job_category!r} (best score {score:.2f}).")
+        raise TargetNotFound(
+            f"No benchmark close to {job_category!r} (best score {score:.2f}).",
+            candidates=suggest_categories(job_category),
+        )
     return dict(_by("category_id = :v", {"v": cid})) | {"_target_confidence": round(score, 3)}
 
 
