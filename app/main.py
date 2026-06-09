@@ -6,13 +6,17 @@
 Both converge on the deterministic gap engine (app/gap.analyze), comparing the worker's
 skills to the target job's ESCO + CP2021 benchmark.
 """
+import logging
+from contextlib import asynccontextmanager
 from typing import Optional
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import CORS_ORIGINS
-from .gap import TargetNotFound, analyze
+from .gap import TargetNotFound, analyze, _category_index
 from .models import GapResult
 from .sources import (
     ExtractorError,
@@ -23,10 +27,21 @@ from .sources import (
     profile_from_extracted,
 )
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Pre-warm: load model + category index so the first real request is fast.
+    from .config import model
+    model()
+    _category_index()
+    yield
+
+
 app = FastAPI(
     title="Workint Skills-Gap API",
     version="0.1.0",
     description="Compare a worker (PDF CV or stored worker) to a job's ESCO + CP2021 benchmark.",
+    lifespan=lifespan,
 )
 app.add_middleware(
     CORSMiddleware, allow_origins=CORS_ORIGINS, allow_methods=["*"], allow_headers=["*"]

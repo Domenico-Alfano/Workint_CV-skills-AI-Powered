@@ -47,6 +47,7 @@ def _as_skill_list(v) -> list[str]:
             continue
         s = re.sub(r"^\s*(?:[-*•·]|\d+[.)])\s+", "", s)   # strip bullet/number markers
         s = re.sub(r"\*\*|__|`|#", "", s).strip()         # strip markdown emphasis/headings
+        s = s.lower()
         if s:
             cleaned.append(s)
     return cleaned

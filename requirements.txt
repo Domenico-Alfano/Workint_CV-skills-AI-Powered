@@ -18,3 +18,6 @@ requests>=2.31            # call the external CV extractor
 
 # LLM narrative report (Groq via OpenAI-compatible API; OpenAI later)
 openai>=1.30
+
+# Tests (dev only): `pytest -m "not integration"` for the fast suite.
+pytest>=8.0

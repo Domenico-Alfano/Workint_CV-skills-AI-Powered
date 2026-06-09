@@ -4,14 +4,17 @@ For each benchmark skill we find the worker's most similar skill (cosine over mp
 embeddings); it's 'covered' when similarity >= COVER_THRESHOLD, else 'missing'. No LLM.
 """
 import json
+import logging
 from functools import lru_cache
 
 import numpy as np
 from rapidfuzz import fuzz
 from sqlalchemy import text
 
-from .config import COVER_THRESHOLD, engine, model
+from .config import COVER_THRESHOLD, CP2021_COVER_THRESHOLD, engine, model
 from .models import BenchmarkGap, GapResult, SkillMatch
+
+log = logging.getLogger(__name__)
 
 RESOLVE_MIN_SCORE = 0.55
 RESOLVE_ALPHA = 0.5     # same weight as classify_categories.py
@@ -89,6 +92,7 @@ def resolve_category(job_text: str):
         if stem in lower:
             for i, lbl in enumerate(labels):
                 if lbl.lower() == target_label.lower():
+                    log.info("target resolved via synonym: %r -> %r", job_text, labels[i])
                     return (ids[i], labels[i], 1.0)
             break  # stem matched but target not in benchmark — fall through to hybrid
 
@@ -98,7 +102,11 @@ def resolve_category(job_text: str):
     combined = RESOLVE_ALPHA * sem + (1 - RESOLVE_ALPHA) * lex
     j = int(np.argmax(combined))
     score = float(combined[j])
-    return (ids[j], labels[j], score) if score >= RESOLVE_MIN_SCORE else (None, None, score)
+    if score >= RESOLVE_MIN_SCORE:
+        log.info("target resolved via hybrid: %r -> %r (score %.2f)", job_text, labels[j], score)
+        return (ids[j], labels[j], score)
+    log.warning("target not resolved: %r (best score %.2f)", job_text, score)
+    return (None, None, score)
 
 
 def _labels(jsonb_value) -> list[str]:
@@ -132,13 +140,13 @@ def _load_benchmark(category_id: int | None, job_category: str | None) -> dict:
 
 
 def _gap(source: str, occupation_label: str | None, bench_labels: list[str],
-         worker_skills: list[str], sims: np.ndarray | None) -> BenchmarkGap:
+         worker_skills: list[str], sims: np.ndarray | None, threshold: float) -> BenchmarkGap:
     covered, missing = [], []
     for i, skill in enumerate(bench_labels):
         if sims is not None and len(worker_skills):
             j = int(np.argmax(sims[i]))
             score = float(sims[i][j])
-            if score >= COVER_THRESHOLD:
+            if score >= threshold:
                 covered.append(SkillMatch(skill=skill, matched_with=worker_skills[j],
                                           score=round(score, 3)))
                 continue
@@ -153,6 +161,7 @@ def _gap(source: str, occupation_label: str | None, bench_labels: list[str],
 
 def analyze(worker_skills: list[str], category_id: int | None = None,
             job_category: str | None = None) -> GapResult:
+    log.info("analyze: job=%r category_id=%s n_skills=%d", job_category, category_id, len(worker_skills))
     bm = _load_benchmark(category_id, job_category)
     esco_labels = _labels(bm["essential_skills"]) + _labels(bm["optional_skills"])
     cp_labels = _labels(bm["cp2021_skills"])
@@ -176,8 +185,17 @@ def analyze(worker_skills: list[str], category_id: int | None = None,
         job_category=bm["job_category"],
         target_confidence=None if conf == 1.0 else conf,
         n_worker_skills=len(worker_skills),
-        esco=_gap("esco", bm["occupation_label_it"], esco_labels, worker_skills, esco_sims),
-        cp2021=_gap("cp2021", bm["cp2021_label"], cp_labels, worker_skills, cp_sims),
+        esco=_gap("esco", bm["occupation_label_it"], esco_labels, worker_skills, esco_sims,
+                  COVER_THRESHOLD),
+        cp2021=_gap("cp2021", bm["cp2021_label"], cp_labels, worker_skills, cp_sims,
+                    CP2021_COVER_THRESHOLD),
     )
     result.report = generate_report(result)
+    log.info(
+        "gap result: %r -> %r | esco %.1f%% (%d/%d) | cp2021 %.1f%% (%d/%d) | conf=%s",
+        job_category, bm["job_category"],
+        result.esco.coverage_pct, result.esco.n_covered, result.esco.n_total,
+        result.cp2021.coverage_pct, result.cp2021.n_covered, result.cp2021.n_total,
+        result.target_confidence,
+    )
     return result

@@ -17,6 +17,7 @@ data/cp2021/*.zip
 .venv/
 __pycache__/
 *.pyc
+.pytest_cache/
 
 # Cached embeddings
 data/cache/

@@ -30,6 +30,30 @@ def _fmt(skills: list, n: int = 8) -> str:
     return ", ".join(f'"{s}"' for s in skills[:n]) + ("…" if len(skills) > n else "")
 
 
+def _to_str(v) -> str:
+    """Coerce any JSON shape the model returns into a string (it ignores the format often)."""
+    if isinstance(v, str):
+        return v
+    if isinstance(v, dict):
+        return " ".join(str(x) for x in v.values() if x)
+    if isinstance(v, list):
+        return " ".join(str(x) for x in v if x)
+    return str(v)
+
+
+def _to_str_list(v) -> list[str]:
+    """Coerce a 'formation' value into a list of strings (handles [{nome, durata}] shapes)."""
+    if isinstance(v, list):
+        return [
+            item.get("nome") or item.get("name") or _to_str(item)
+            if isinstance(item, dict) else str(item)
+            for item in v
+        ]
+    if isinstance(v, str):
+        return [v]
+    return []
+
+
 def generate_report(result: "GapResult") -> "Report | None":
     from .config import LLM_ENABLED, LLM_MODEL
     from .models import Report
@@ -70,27 +94,6 @@ Formato richiesto (JSON, in italiano, tono professionale):
     # Strip markdown fences if the model wraps the JSON anyway.
     raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.MULTILINE).strip()
     data = json.loads(raw)
-
-    def _to_str(v) -> str:
-        if isinstance(v, str):
-            return v
-        if isinstance(v, dict):
-            return " ".join(str(x) for x in v.values() if x)
-        if isinstance(v, list):
-            return " ".join(str(x) for x in v if x)
-        return str(v)
-
-    def _to_str_list(v) -> list[str]:
-        if isinstance(v, list):
-            return [
-                item.get("nome") or item.get("name") or _to_str(item)
-                if isinstance(item, dict) else str(item)
-                for item in v
-            ]
-        if isinstance(v, str):
-            return [v]
-        return []
-
     return Report(
         strengths=_to_str(data.get("strengths", "")),
         gaps=_to_str(data.get("gaps", "")),

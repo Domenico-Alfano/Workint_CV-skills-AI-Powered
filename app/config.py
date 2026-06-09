@@ -13,8 +13,13 @@ load_dotenv(ROOT / ".env")
 EMBEDDING_MODEL = os.getenv(
     "EMBEDDING_MODEL", "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
 )
-# A worker skill "covers" a benchmark skill when cosine similarity >= this.
+# A worker skill "covers" a benchmark skill when cosine similarity >= this (ESCO axis).
 COVER_THRESHOLD = float(os.getenv("GAP_COVER_THRESHOLD", "0.62"))
+# CP2021 competences are transversal/abstract (O*NET-style): concrete skills match them
+# more loosely, AND proper-noun tech skills ("java") produce false positives up to ~0.67.
+# A higher CP2021 threshold suppresses that noise while keeping genuine soft/manual matches
+# (which cluster 0.70-0.88). Calibrated empirically — see DESIGN_NOTES.
+CP2021_COVER_THRESHOLD = float(os.getenv("GAP_CP2021_COVER_THRESHOLD", "0.68"))
 
 # CORS origins for the Angular frontend (comma-separated; "*" allows all for dev).
 CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",") if o.strip()]
