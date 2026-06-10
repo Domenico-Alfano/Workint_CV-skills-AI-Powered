@@ -6,9 +6,12 @@ Returns None if LLM_API_KEY is not set.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from functools import lru_cache
 from typing import TYPE_CHECKING
+
+log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .models import GapResult, Report
@@ -83,19 +86,25 @@ Formato richiesto (JSON, in italiano, tono professionale):
   ]
 }}"""
 
-    resp = _client().chat.completions.create(
-        model=LLM_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=600,
-        temperature=0.4,
-        response_format={"type": "json_object"},
-    )
-    raw = resp.choices[0].message.content.strip()
-    # Strip markdown fences if the model wraps the JSON anyway.
-    raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.MULTILINE).strip()
-    data = json.loads(raw)
-    return Report(
-        strengths=_to_str(data.get("strengths", "")),
-        gaps=_to_str(data.get("gaps", "")),
-        formation=_to_str_list(data.get("formation", [])),
-    )
+    # The report is a nice-to-have on top of the deterministic gap: a provider outage or
+    # malformed JSON must degrade to report=None, never fail the whole analyze request.
+    try:
+        resp = _client().chat.completions.create(
+            model=LLM_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=600,
+            temperature=0.4,
+            response_format={"type": "json_object"},
+        )
+        raw = resp.choices[0].message.content.strip()
+        # Strip markdown fences if the model wraps the JSON anyway.
+        raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.MULTILINE).strip()
+        data = json.loads(raw)
+        return Report(
+            strengths=_to_str(data.get("strengths", "")),
+            gaps=_to_str(data.get("gaps", "")),
+            formation=_to_str_list(data.get("formation", [])),
+        )
+    except Exception:
+        log.exception("LLM report generation failed; returning report=None")
+        return None

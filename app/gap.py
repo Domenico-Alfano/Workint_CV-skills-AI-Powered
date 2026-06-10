@@ -120,9 +120,10 @@ def _encode(texts: tuple[str, ...]) -> np.ndarray:
 @lru_cache(maxsize=1)
 def _category_index():
     """Cache (ids, labels, embeddings) of all benchmark job_categories for target resolution."""
-    rows = engine().connect().execute(
-        text("SELECT category_id, job_category FROM job_benchmark ORDER BY category_id")
-    ).all()
+    with engine().connect() as conn:
+        rows = conn.execute(
+            text("SELECT category_id, job_category FROM job_benchmark ORDER BY category_id")
+        ).all()
     ids = [r[0] for r in rows]
     labels = [r[1] for r in rows]
     emb = model().encode(labels, normalize_embeddings=True)
@@ -185,7 +186,8 @@ def _load_benchmark(category_id: int | None, job_category: str | None) -> dict:
               "optional_skills, cp2021_label, cp2021_skills FROM job_benchmark WHERE ")
 
     def _by(where, params):
-        return engine().connect().execute(text(select + where), params).mappings().first()
+        with engine().connect() as conn:
+            return conn.execute(text(select + where), params).mappings().first()
 
     if category_id is not None:
         row = _by("category_id = :v", {"v": category_id})
@@ -243,6 +245,7 @@ def analyze(worker_skills: list[str], category_id: int | None = None,
     else:
         esco_sims = cp_sims = None
 
+    from .courses import suggest_courses     # deferred: courses imports gap._encode
     from .llm import generate_report
     conf = bm.get("_target_confidence")
     result = GapResult(
@@ -255,6 +258,7 @@ def analyze(worker_skills: list[str], category_id: int | None = None,
         cp2021=_gap("cp2021", bm["cp2021_label"], cp_labels, worker_skills, cp_sims,
                     CP2021_COVER_THRESHOLD),
     )
+    result.suggested_courses = suggest_courses(result.esco.missing)
     result.report = generate_report(result)
     log.info(
         "gap result: %r -> %r | esco %.1f%% (%d/%d) | cp2021 %.1f%% (%d/%d) | conf=%s",

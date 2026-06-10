@@ -19,6 +19,12 @@ DATE_FROM = os.getenv("DATE_FROM", "2026-04-01")
 DATE_TO = os.getenv("DATE_TO") or None   # None = up to the newest available
 MIN_POSTINGS = int(os.getenv("MIN_POSTINGS", "10"))
 
+# --- Demand trend (compute_trends.py): two adjacent windows of this many days ---
+TREND_WINDOW_DAYS = int(os.getenv("TREND_WINDOW_DAYS", "90"))
+# Below this many postings across both windows the share-growth % is noise (tiny
+# categories produce capped 999% swings) -> growth_pct NULL (neutral in ranking).
+TREND_MIN_POSTINGS = int(os.getenv("TREND_MIN_POSTINGS", "30"))
+
 
 def safe_identifier(name: str) -> str:
     """Guard table/column names interpolated into SQL (they come from .env, not users)."""

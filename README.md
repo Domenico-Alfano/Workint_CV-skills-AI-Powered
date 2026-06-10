@@ -92,7 +92,19 @@ python scripts/classify_cp2021.py      # job_category -> CP2021 profession (hybr
 python scripts/fetch_cp2021_skills.py  # INAPP API -> CP2021 competences per profession
 python scripts/materialize_benchmark.py  # -> job_benchmark (one row per category)
 python scripts/precompute_embeddings.py  # -> data/cache/label_emb_<model>.npz (API loads it at startup)
+python scripts/compute_trends.py       # -> category_trend (demand growth for /recommend-*)
+python scripts/load_courses.py         # -> course catalog (course suggestions in analyze-*)
 ```
+
+`compute_trends.py` compares each category's **share** of postings in two adjacent
+`TREND_WINDOW_DAYS` windows (share-based = robust to scraper-volume swings). If the source
+went quiet recently it warns — pin `TREND_ANCHOR_DATE` (e.g. `2025-10-31`) to the last
+healthy date. Skipping this script is fine: recommendations then rank by skills only.
+
+`load_courses.py` loads `data/courses_seed.csv` (DEMO content) — pass a path to load the
+real catalog (GOL/regional), same `;`-separated columns. Courses are matched to missing
+skills semantically at request time, so no manual skill mapping is needed. Skipping it is
+fine: `suggested_courses` is then `[]`.
 
 Optional human review of the classification (low-confidence rows are flagged):
 ```bash
@@ -117,6 +129,8 @@ Base path `/skills-gap`. Both endpoints return the same `GapResult` JSON.
 |---|---|---|
 | `POST /skills-gap/analyze-cv` | `multipart/form-data` `file=<PDF>`; query `target_category_id` *or* `target_job_category` | Ad-hoc CV: PDF → extractor → gap |
 | `POST /skills-gap/analyze-worker/{worker_id}` | path `worker_id` (int) | Stored worker (reads `workers` table) → gap |
+| `POST /skills-gap/recommend-cv` | `multipart/form-data` `file=<PDF>`; query `current_job` (falls back to CV role), `k` (default 10) | Career transition: rank ALL jobs by reachability × demand growth |
+| `POST /skills-gap/recommend-worker/{worker_id}` | path `worker_id`; query `k` | Same, for a stored worker |
 | `GET /health` | – | Liveness |
 
 **`GapResult` response shape:**
@@ -134,6 +148,11 @@ Base path `/skills-gap`. Both endpoints return the same `GapResult` JSON.
     "missing": [ "pianificare i menu", "nutrizione", ... ]
   },
   "cp2021": { ...same shape... },    // Italian competences (transversal; see Limitations)
+  "suggested_courses": [             // [] if no course catalog loaded
+    { "skill": "nutrizione",         // a missing ESCO skill with good training available
+      "courses": [ { "title": "Corso nutrizione e diete", "provider": "...",
+                     "url": null, "hours": 40, "score": 0.8 } ] }
+  ],
   "report": {                        // null if LLM_API_KEY not set
     "strengths": "Il candidato ...",
     "gaps": "Le lacune principali ...",
@@ -141,6 +160,28 @@ Base path `/skills-gap`. Both endpoints return the same `GapResult` JSON.
   }
 }
 ```
+
+**`RecommendationResult` response shape (recommend-\*):**
+```jsonc
+{
+  "n_worker_skills": 8,
+  "current_category_id": 31,            // resolved current job (null if not given/resolved)
+  "current_job_category": "Cuoco",
+  "current_growth_pct": -22.8,          // "your job is declining" signal
+  "recommendations": [                  // top-k, excluding the current job
+    {
+      "category_id": 14, "job_category": "Aiuto Cuoco",
+      "score": 0.6,                     // coverage gated by demand (0..1)
+      "coverage_pct": 60.0, "n_covered": 30, "n_total": 50,
+      "growth_pct": 332.1,              // null = no trend data (neutral in ranking)
+      "missing_preview": ["pianificare i menu", ...]   // closest-to-acquire skills first
+    }
+  ]
+}
+```
+Ranking: `score = coverage × demand_factor`, where the demand factor maps growth −100%…+100%
+to 0.5…1.0 (unknown trend = neutral 0.75). Reachability dominates by design — a booming job
+the worker can't reach never outranks a reachable one.
 
 Error codes: `404` target/worker not found · `422` no skills parsed / no target job ·
 `502` extractor failed · `501` workers schema mismatch.
@@ -153,6 +194,7 @@ You only need the API base URL + the contract above. Suggested Angular rendering
 - `esco.covered` → list of matched skills (each shows `matched_with` + `score`).
 - `esco.missing` → chips/tags of skills to acquire.
 - `report.strengths` / `report.gaps` → paragraphs; `report.formation` → `*ngFor` bullet list.
+- `suggested_courses` → per missing skill, a card with its best courses (title, hours, provider).
 - `report` may be `null` → guard with `*ngIf="result.report"`.
 - `target_confidence != null` → show a "we guessed the target job — confirm?" notice.
 - The two endpoints map to your two flows (PDF upload / pick existing worker).
@@ -179,6 +221,7 @@ Set `CORS_ORIGINS` to the Angular origin(s).
 | `LOCAL_DB_URL` | Postgres holding the benchmark (read by the API) |
 | `EXTERNAL_JOBS_DB_URL` | Read-only external DB (`offerte_lavoro`, `workers`) |
 | `POSTINGS_TABLE`, `DATE_COLUMN`, `DATE_FROM`, `MIN_POSTINGS` | Postings snapshot window |
+| `TREND_WINDOW_DAYS`, `TREND_MIN_POSTINGS`, `TREND_ANCHOR_DATE` | Demand-trend windows (recommend-*) |
 | `ESCO_VERSION`, `ESCO_DATA_DIR` | ESCO pin + data dir |
 | `EXTRACTOR_URL`, `EXTRACTOR_PASSWORD`, `EXTRACTOR_VERIFY_SSL` | CV extractor (Flow 1) |
 | `WORKERS_TABLE`, `WORKERS_COL_*` | Stored-CV mapping (Flow 2) |
@@ -189,8 +232,10 @@ Set `CORS_ORIGINS` to the Angular origin(s).
 
 ```
 app/            FastAPI service
-  main.py         endpoints (analyze-cv, analyze-worker, health)
+  main.py         endpoints (analyze-*, recommend-*, health)
   gap.py          deterministic gap engine + target resolution
+  recommend.py    career-transition ranking (skills reachability x demand trend)
+  courses.py      course suggestions for missing skills (semantic match vs catalog)
   sources.py      input adapters (extractor JSON / workers table)
   llm.py          narrative report (Groq/OpenAI)
   models.py       request/response schemas (the contract)
@@ -209,3 +254,7 @@ data/           ESCO + CP2021 downloads (gitignored)
   from the benchmark (e.g. "Sviluppatore" when only "Software Developer" exists) →
   `target_confidence` surfaces low-confidence matches for the UI to confirm.
 - Stored `workers` skill quality varies (some rows hold sparse/free-text skills).
+- The shipped course catalog (`data/courses_seed.csv`, 42 rows) is **demo content** to
+  exercise the matching — replace with a real catalog before production.
+- Demand trends depend on the postings scraper being alive: pin `TREND_ANCHOR_DATE` to the
+  last healthy period (volume collapsed after Oct 2025) or growth numbers go quiet/NULL.

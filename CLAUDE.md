@@ -4,8 +4,11 @@ Workint skills-gap backend: builds a deterministic per-job skills benchmark (ESC
 and compares a worker CV against it → gap + LLM report. FastAPI backend; Angular FE consumes it.
 
 ## Where things are
-- `app/` — FastAPI service: `main.py` (2 endpoints), `gap.py` (gap engine + target resolution),
-  `sources.py` (extractor + workers adapters), `llm.py` (report), `models.py`, `config.py`.
+- `app/` — FastAPI service: `main.py` (analyze-* + recommend-* endpoints), `gap.py` (gap
+  engine + target resolution), `recommend.py` (career-transition ranking: coverage of ALL
+  benchmarks × demand trend from `category_trend`), `courses.py` (semantic course match for
+  missing skills), `sources.py` (extractor + workers adapters), `llm.py` (report),
+  `models.py`, `config.py`.
 - `scripts/` — offline benchmark-build pipeline (run order in README "Build the benchmark").
 - `sql/schema.sql` — DB schema. `data/` — ESCO/CP2021 downloads (gitignored).
 
@@ -33,4 +36,10 @@ and compares a worker CV against it → gap + LLM report. FastAPI backend; Angul
 - Don't re-read DESIGN_NOTES.md each session (it's ~5k words of history). This file is enough.
 - Print counts/summaries from commands, not full JSON/long lists. Trust edits without re-reading.
 
-## Status: both endpoints working end-to-end. Benchmark = 306 categories. See README for the contract.
+- Demand trends (scripts/compute_trends.py) are SHARE-based — postings volume swings with
+  scraper activity (collapsed after Oct 2025), absolute counts lie. Pin TREND_ANCHOR_DATE.
+- No literal `%` in sql/schema.sql comments — psycopg2 reads them as placeholders (init_db).
+- Course catalog is a 42-row demo seed (data/courses_seed.csv); course<->skill match floor
+  MIN_COURSE_SIM=0.55 in courses.py (real matches 0.74-0.90, noise <=0.53).
+
+## Status: analyze-* + recommend-* endpoints working end-to-end. Benchmark = 306 categories. See README for the contract.

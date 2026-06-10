@@ -130,6 +130,37 @@ CREATE TABLE IF NOT EXISTS job_cp2021_map (
     created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- ---------- Demand trend per category (scripts/compute_trends.py) ----------
+-- Posting counts in two adjacent windows of `window_days` ending at `anchor_date`.
+-- growth_pct = percent change of the category's SHARE of postings between windows
+-- (robust to scraper-volume swings), the "is this job growing?" signal consumed by
+-- the /skills-gap/recommend-* endpoints. NOTE: keep literal percent signs out of this
+-- file — psycopg2 treats them as placeholders in exec_driver_sql (init_db.py).
+CREATE TABLE IF NOT EXISTS category_trend (
+    category_id     INTEGER PRIMARY KEY REFERENCES job_category(category_id),
+    job_category    TEXT NOT NULL,
+    recent_count    INTEGER NOT NULL,
+    previous_count  INTEGER NOT NULL,
+    growth_pct      REAL,                -- NULL = not enough data to call a trend
+    window_days     INTEGER NOT NULL,
+    anchor_date     DATE,
+    computed_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ---------- Course catalog (scripts/load_courses.py) ----------
+-- Courses are matched to MISSING skills semantically (mpnet over title+description),
+-- so the catalog can be free text — no manual ESCO mapping needed. The shipped seed
+-- (data/courses_seed.csv) is demo content: replace with the real catalog (GOL/regional).
+CREATE TABLE IF NOT EXISTS course (
+    course_id   SERIAL PRIMARY KEY,
+    title       TEXT NOT NULL,
+    provider    TEXT,
+    url         TEXT,
+    description TEXT,
+    hours       INTEGER,
+    loaded_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- CP2021 columns on the materialized benchmark (the second report section).
 ALTER TABLE job_benchmark ADD COLUMN IF NOT EXISTS cp2021_cod_5  TEXT;
 ALTER TABLE job_benchmark ADD COLUMN IF NOT EXISTS cp2021_label  TEXT;
