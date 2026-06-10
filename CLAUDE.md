@@ -9,7 +9,8 @@ and compares a worker CV against it → gap + LLM report. FastAPI backend; Angul
   benchmarks × demand trend from `category_trend`), `courses.py` (semantic course match for
   missing skills), `sources.py` (extractor + workers adapters), `llm.py` (report),
   `models.py`, `config.py`.
-- `scripts/` — offline benchmark-build pipeline (run order in README "Build the benchmark").
+- `scripts/` — offline benchmark-build pipeline (run order in README §9, "La pipeline di
+  build del benchmark"; README is now the full Italian operating manual).
 - `sql/schema.sql` — DB schema. `data/` — ESCO/CP2021 downloads (gitignored).
 
 ## Run

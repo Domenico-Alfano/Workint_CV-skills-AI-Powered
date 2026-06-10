@@ -66,6 +66,16 @@ def generate_report(result: "GapResult") -> "Report | None":
     esco = result.esco
     missing = esco.missing[:12]
     covered = [c.skill for c in esco.covered[:8]]
+    # Ground the 'formation' suggestions in the real catalog: courses already matched to
+    # the missing skills (deterministically) beat whatever the model would invent.
+    catalog = "\n".join(
+        f'  - "{c.title}"{f" ({c.hours} ore)" if c.hours else ""} -> utile per: {sc.skill}'
+        for sc in result.suggested_courses for c in sc.courses[:1]
+    )
+    catalog_block = (
+        f"- Corsi realmente disponibili a catalogo (PREFERISCILI nei suggerimenti formativi, "
+        f"citandone il titolo esatto):\n{catalog}\n" if catalog else ""
+    )
 
     prompt = f"""Sei un consulente del lavoro italiano. Analizza il gap di competenze e rispondi SOLO con un oggetto JSON valido (nessun testo fuori dal JSON).
 
@@ -74,11 +84,11 @@ Dati:
 - Competenze presenti: {_fmt(covered)}
 - Competenze mancanti: {_fmt(missing)}
 - Copertura benchmark: {esco.coverage_pct}% ({esco.n_covered}/{esco.n_total})
-
+{catalog_block}
 Formato richiesto (JSON, in italiano, tono professionale):
 {{
-  "strengths": "<un paragrafo sui punti di forza del candidato>",
-  "gaps": "<un paragrafo sulle lacune principali da colmare>",
+  "strengths": "<un paragrafo in prosa sui punti di forza del candidato — niente elenchi o liste>",
+  "gaps": "<un paragrafo in prosa sulle lacune principali da colmare — niente elenchi o liste>",
   "formation": [
     "<suggerimento formativo concreto 1>",
     "<suggerimento formativo concreto 2>",

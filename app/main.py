@@ -62,6 +62,16 @@ def health() -> dict:
     return {"status": "ok"}
 
 
+@app.post("/skills-gap/reload-courses")
+def reload_courses() -> dict:
+    """Re-read the `course` table after a catalog load (scripts/load_courses.py) without
+    restarting the server. Cheap: course embeddings are memoized per text in the store."""
+    from .courses import _course_index
+    _course_index.cache_clear()
+    courses, _ = _course_index()
+    return {"status": "ok", "courses": len(courses)}
+
+
 def _run(skills: list[str], category_id: Optional[int], job_category: Optional[str]) -> GapResult:
     try:
         return analyze(worker_skills=skills, category_id=category_id, job_category=job_category)

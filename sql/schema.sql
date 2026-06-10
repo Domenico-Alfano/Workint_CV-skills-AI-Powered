@@ -160,6 +160,12 @@ CREATE TABLE IF NOT EXISTS course (
     hours       INTEGER,
     loaded_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Multi-source catalog: each load replaces only its own `source` (seed | formatemp |
+-- gol_<regione> | udemy | ...), so sources can be refreshed on independent cadences.
+ALTER TABLE course ADD COLUMN IF NOT EXISTS source      TEXT NOT NULL DEFAULT 'seed';
+ALTER TABLE course ADD COLUMN IF NOT EXISTS region      TEXT;
+ALTER TABLE course ADD COLUMN IF NOT EXISTS external_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_course_source ON course(source);
 
 -- CP2021 columns on the materialized benchmark (the second report section).
 ALTER TABLE job_benchmark ADD COLUMN IF NOT EXISTS cp2021_cod_5  TEXT;
