@@ -24,6 +24,10 @@ CP2021_COVER_THRESHOLD = float(os.getenv("GAP_CP2021_COVER_THRESHOLD", "0.68"))
 # CORS origins for the Angular frontend (comma-separated; "*" allows all for dev).
 CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",") if o.strip()]
 
+# Optional shared API key: when set, every /skills-gap/* endpoint requires the
+# `x-api-key` header (Swagger gets an Authorize button). Unset = open (dev / trusted LAN).
+API_KEY = os.getenv("API_KEY")
+
 # Flow 2: stored CVs live in the external `workers` table (schema TBD — see app/sources.py).
 WORKERS_TABLE = os.getenv("WORKERS_TABLE", "workers")
 

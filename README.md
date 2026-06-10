@@ -244,7 +244,7 @@ Le etichette del benchmark sono statiche tra una build e l'altra → si precompu
 
 ### 4.2 `POST /skills-gap/analyze-cv` con un PDF
 
-1. Il PDF è inoltrato all'**estrattore esterno** (`EXTRACTOR_URL`, header `x-access-password`, timeout 120 s, ~7 s misurati). Errore di rete o HTTP ≠ 200 → **502** col motivo.
+1. Il PDF è inoltrato all'**estrattore esterno** (`EXTRACTOR_URL`, header `x-access-password`, timeout 120 s, ~7 s misurati). Errore di rete o HTTP ≠ 200 → **502** col motivo. Le estrazioni riuscite sono **cacheate per hash del contenuto** (LRU, 64 voci): il flusso consigliato recommend→analyze carica lo stesso PDF due volte, ma paga l'estrattore una sola; gli errori non vengono cacheati (il retry riparte pulito).
 2. La risposta JSON è mappata in un `WorkerProfile` da `sources.profile_from_extracted`: chiavi tolleranti (`competenze_tecniche`, `competenze_soft`, `skills`, `hard_skills`…), pulizia di ogni voce (via bullet `- * • ·` e numerazioni, via markdown `** __ \``, lowercase, trim), deduplica preservando l'ordine. Nessuna skill → **422**.
 3. Scelta del target, in priorità:
    - `target_category_id` presente → lookup diretto (id inesistente → 404);
@@ -282,7 +282,7 @@ Svuota la cache dell'indice corsi e la ricostruisce dal DB; risponde `{"status":
 
 ## 5. Riferimento API completo
 
-Base path `/skills-gap`. Nessuna autenticazione (servizio interno dietro reverse proxy — vedi roadmap §14).
+Base path `/skills-gap`. **Autenticazione opzionale**: se la variabile `API_KEY` è impostata, tutti gli endpoint `/skills-gap/*` richiedono l'header `x-api-key` (altrimenti **401**; su Swagger appare il pulsante *Authorize*); `/health` resta sempre libero per i probe del load balancer. Con `API_KEY` assente il servizio è aperto — solo per sviluppo/rete fidata.
 
 | Metodo e path | Input | Output | Scopo |
 |---|---|---|---|
@@ -355,7 +355,8 @@ Base path `/skills-gap`. Nessuna autenticazione (servizio interno dietro reverse
 - `target_confidence != null` → banner "abbiamo interpretato il target come X — confermi?".
 - `report` può essere `null` → `*ngIf`; `suggested_courses` può essere `[]`.
 - Su `recommend-*` passare **sempre** `current_job` quando noto (l'estrattore spesso non fornisce il ruolo).
-- Flusso consigliato: `recommend-*` → click su una card → `analyze-*` con `target_category_id` della card.
+- Flusso consigliato: `recommend-*` → click su una card → `analyze-*` con `target_category_id` della card (il secondo upload dello stesso PDF non ripaga l'estrattore: cache per hash lato server).
+- Se `API_KEY` è attiva, inviare l'header `x-api-key` su ogni chiamata `/skills-gap/*`.
 - `CORS_ORIGINS` va impostato sull'origin Angular.
 
 ---
@@ -601,6 +602,7 @@ Quando entra il primo catalogo vero: `python scripts/load_courses.py --delete-so
 | `WORKERS_TABLE` / `WORKERS_COL_ID` / `WORKERS_COL_SKILLS` / `WORKERS_COL_ROLE` / `WORKERS_COL_TARGET_JOB` | `workers` / `worker_id` / `worker_personal_skills` / `worker_preferred_jobs` / idem | Mappatura della tabella worker esterna |
 | `LLM_PROVIDER` / `LLM_API_KEY` / `LLM_MODEL` | `groq` / ∅ / `llama-3.1-8b-instant` | Report LLM; chiave assente = `report: null` (tutto il resto funziona) |
 | `CORS_ORIGINS` | `*` | Origin Angular ammessi (csv) |
+| `API_KEY` | ∅ (= aperto) | Se impostata, `/skills-gap/*` richiedono l'header `x-api-key` |
 
 ---
 
@@ -624,7 +626,7 @@ Organizzazione: `tests/test_gap.py` (risoluzione target, determinismo, soglia CP
 - **La risoluzione del target può mancare sinonimi italiani** assenti da benchmark e mappa `_SYNONYMS`; il sistema degrada bene (404 con candidati), ma la mappa va arricchita col tempo guardando i log (`target not resolved`).
 - **L'estrattore spesso non restituisce il ruolo** → `current_job` va passato dalla UI quando noto.
 - **Qualità delle skill dei worker memorizzati variabile** (righe sparse/free-text): il gap riflette la qualità dell'input.
-- **Nessuna autenticazione API**: accettabile solo dietro proxy in rete interna (vedi roadmap).
+- **Autenticazione minima** (API key condivisa opzionale, §5): adeguata dietro proxy in rete interna; per esposizioni più ampie servono rate-limit e ruoli (roadmap).
 - **`score` LLM-free, report LLM-only**: scelta deliberata — i numeri sono sempre difendibili e riproducibili; il testo è un di più sacrificabile.
 
 ---
@@ -636,12 +638,12 @@ In ordine di valore/urgenza:
 1. **Catalogo corsi reale** *(non è codice, è il blocco #1)*: ottenere l'export Forma.Temp/partner; al primo CSV vero: load con `--source`, `--delete-source seed`, ricalibrare `MIN_COURSE_SIM` su un campione di match a mano. Poi: fetcher automatico per la prima fonte API disponibile (Udemy affiliate quando c'è la chiave).
 2. **Integrazione frontend Angular**: consumare `recommend-*` (card cliccabili → `analyze-*`), banner `target_confidence`, picker sul 404 con `candidates`, vista corsi. Il contratto è in §5.
 3. **Ripristino dello scraper annunci** (fuori da questo repo) → poi togliere `TREND_ANCHOR_DATE` e schedulare `compute_trends.py` mensile.
-4. **Autenticazione/rate-limit sull'API** (almeno una API key condivisa o mTLS dal proxy) prima di esporla oltre la rete interna; valutare se `reload-courses` debba richiedere un ruolo admin.
+4. **Rate-limit e ruoli sull'API** — la API key condivisa c'è (`API_KEY`, header `x-api-key`); restano il rate-limit e l'eventuale ruolo admin separato per `reload-courses` prima di esporla oltre la rete interna.
 5. **Endpoint "percorso completo"**: `recommend` + `analyze` sul top-1 in una chiamata sola, per ridurre la latenza percepita della UI (due upload del PDF oggi → uno).
 6. **Persistenza degli esiti**: salvare le analisi (worker, target, gap, corsi) per follow-up nel tempo ("6 mesi fa ti mancavano 8 competenze, oggi 3") e per metriche di prodotto.
 7. **Miglioramenti del matching** (quando ci saranno dati di feedback): soglie differenziate per `skill_type` ESCO (knowledge vs skill/competence), eventuale cross-encoder di re-ranking sui top-k del recommend, arricchimento `_SYNONYMS` data-driven dai log dei 404.
 8. **Report LLM**: valutare structured output nativo (json_schema) sui provider che lo supportano; includere nel prompt anche il trend ("il tuo settore cresce/cala") per un report più consulenziale.
-9. **CI**: GitHub Actions con la suite veloce a ogni push (gira senza DB/modello per costruzione); job notturno opzionale con gli integration.
+9. **CI** — la suite veloce gira a ogni push (`.github/workflows/ci.yml`); resta l'eventuale job notturno con gli integration test (richiede un Postgres di servizio e il modello cacheato).
 10. **Containerizzazione dell'API** con modello e `.npz` baked, healthcheck su `/health`, per allineare dev e prod.
 11. **Estensione del ciclo di review anche a CP2021** (`export/import_review` oggi coprono solo l'asse ESCO).
 12. **Aggiornamento di docs/MANUALE.md** (didattico): è fermo a prima dei moduli `recommend.py`/`courses.py`/trend.

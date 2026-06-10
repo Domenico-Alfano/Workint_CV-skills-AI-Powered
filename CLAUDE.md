@@ -42,5 +42,7 @@ and compares a worker CV against it → gap + LLM report. FastAPI backend; Angul
 - No literal `%` in sql/schema.sql comments — psycopg2 reads them as placeholders (init_db).
 - Course catalog is a 42-row demo seed (data/courses_seed.csv); course<->skill match floor
   MIN_COURSE_SIM=0.55 in courses.py (real matches 0.74-0.90, noise <=0.53).
+- Optional API_KEY env -> /skills-gap/* require x-api-key header (/health stays open).
+  CV extractions are LRU-cached by file hash in main.py (recommend->analyze = 1 extractor call).
 
 ## Status: analyze-* + recommend-* endpoints working end-to-end. Benchmark = 306 categories. See README for the contract.

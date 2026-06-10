@@ -6,6 +6,7 @@ embeddings); it's 'covered' when similarity >= COVER_THRESHOLD, else 'missing'. 
 import hashlib
 import json
 import logging
+import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -22,7 +23,10 @@ RESOLVE_MIN_SCORE = 0.55
 RESOLVE_ALPHA = 0.5     # same weight as classify_categories.py
 
 # Italian job-title synonyms that the hybrid matcher misses (benchmark uses different
-# labels, often English). Checked case-insensitively against the whole input string.
+# labels, often English). Each stem matches case-insensitively at a WORD START anywhere
+# in the input ("sviluppator" -> "Sviluppatore senior" but not "*svilupator"); a stem
+# with a trailing space means whole-word only ("hr " matches "hr" / "hr manager", never
+# the "hr" inside "schreiber").
 _SYNONYMS: list[tuple[str, str]] = [
     ("sviluppator", "Software Developer"),
     ("programmator", "Programmatore"),
@@ -65,6 +69,13 @@ _SYNONYMS: list[tuple[str, str]] = [
     ("receptionist","Receptionist"),
     ("segretari",   "Assistente Amministrativo"),
     ("amministrat", "Assistente Amministrativo"),
+]
+
+# Compiled once: word-boundary prefix match; trailing-space stems become whole words.
+_SYNONYM_PATTERNS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"\b" + re.escape(stem.strip()) + (r"\b" if stem != stem.strip() else "")),
+     target)
+    for stem, target in _SYNONYMS
 ]
 
 
@@ -147,8 +158,8 @@ def resolve_category(job_text: str):
     lower = job_text.lower()
 
     # Fast synonym pass: if the input matches a known Italian stem, map to its target label.
-    for stem, target_label in _SYNONYMS:
-        if stem in lower:
+    for pattern, target_label in _SYNONYM_PATTERNS:
+        if pattern.search(lower):
             for i, lbl in enumerate(labels):
                 if lbl.lower() == target_label.lower():
                     log.info("target resolved via synonym: %r -> %r", job_text, labels[i])
